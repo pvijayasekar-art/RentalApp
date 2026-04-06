@@ -1,0 +1,15 @@
+{
+  "appId": "com.rentalmanager.app",
+  "appName": "RentalManager",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true,
+    "allowNavigation": ["*"]
+  },
+  "android": {
+    "minSdkVersion": 28,
+    "targetSdkVersion": 28,
+    "webContentsDebuggingEnabled": true
+  }
+}

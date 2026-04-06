@@ -2,15 +2,287 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RentFlow - Rental Management System</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <title>RentFlow</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { 
+        background: #0f1117; 
+        color: #e8eaf0; 
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 16px;
+        line-height: 1.5;
+      }
+      #root { min-height: 100vh; }
+      .screen { padding: 16px; }
+      .header { 
+        position: fixed; top: 0; left: 0; right: 0;
+        background: #1a1d27; border-bottom: 1px solid #2a2d3d;
+        padding: 12px 16px; display: flex; align-items: center; gap: 12;
+        z-index: 100;
+      }
+      .logo { 
+        width: 32px; height: 32px; border-radius: 8px;
+        background: linear-gradient(135deg,#f97316,#ea580c);
+        display: flex; align-items: center; justify-content: center;
+        font-weight: bold; color: white;
+      }
+      .content { margin-top: 60px; padding-bottom: 80px; }
+      .card {
+        background: #1a1d27;
+        border: 1px solid #2a2d3d;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 12px;
+      }
+      .stat-value { font-size: 24px; font-weight: 700; color: #f97316; }
+      .stat-label { font-size: 13px; color: #6b7280; }
+      .bottom-nav {
+        position: fixed; bottom: 0; left: 0; right: 0;
+        background: #1a1d27; border-top: 1px solid #2a2d3d;
+        display: flex; justify-content: space-around;
+        padding: 8px 0;
+        z-index: 100;
+      }
+      .nav-item {
+        display: flex; flex-direction: column; align-items: center;
+        padding: 4px 12px; border: none; background: transparent;
+        color: #6b7280; font-size: 11px; cursor: pointer;
+      }
+      .nav-item.active { color: #f97316; }
+      button { font-family: inherit; cursor: pointer; }
+      .loading { padding: 40px; text-align: center; color: #6b7280; }
+      .error { padding: 20px; background: #ef4444; color: white; margin: 20px; border-radius: 8px; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <div id="root">
+      <div class="loading">Loading RentFlow...</div>
+    </div>
+    
+    <script>
+      // ==========================================
+      // INLINE RENTFLOW APP - NO BUNDLE NEEDED
+      // ==========================================
+      
+      const API_BASE = 'http://10.0.2.2:5000';
+      const ALT_ENDPOINTS = [
+        'http://192.168.160.1:5000',
+        'http://172.19.160.1:5000',
+        'http://10.131.144.64:5000',
+        'http://10.0.2.2:5000',
+        'http://192.168.232.2:5000',
+        'http://192.168.232.1:5000',
+        'http://172.22.96.1:5000'
+      ];
+      let currentEndpoint = API_BASE;
+      let currentPage = 'dashboard';
+      let dashboardData = null;
+      let lastError = null;
+      
+      // Debug helper - use alerts for Android visibility
+      function debug(msg) {
+        console.log(msg);
+        alert(msg);  // Enabled for debugging
+      }
+      
+      // Simple API wrapper using XMLHttpRequest for WebView compatibility
+      async function api(endpoint) {
+        const url = currentEndpoint + '/api' + endpoint;
+        debug('API call: ' + url);
+        
+        return new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.timeout = 10000;
+          
+          xhr.onload = function() {
+            debug('XHR load: ' + xhr.status);
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                resolve(JSON.parse(xhr.responseText));
+              } catch (e) {
+                reject(new Error('Invalid JSON: ' + e.message));
+              }
+            } else {
+              reject(new Error('HTTP ' + xhr.status));
+            }
+          };
+          
+          xhr.onerror = () => {
+            const errorMsg = 'XHR ERROR:\n' +
+              'Status: ' + xhr.status + ' (' + xhr.statusText + ')\n' +
+              'Status: ' + xhr.responseText + ' (' + xhr.responseText + ')\n' +
+              'ReadyState: ' + xhr.readyState + '\n' +
+              'URL: ' + url + '\n' +
+              'Possible causes:\n' +
+              '- Network unreachable\n' +
+              '- CORS blocked\n' +
+              '- Server not running\n' +
+              '- Firewall blocking';
+            debug(errorMsg);
+            reject(new Error('Network error - XHR failed (status: ' + xhr.status + ')'));
+          };
+          xhr.ontimeout = () => {
+            debug('XHR timeout');
+            reject(new Error('Request timeout'));
+          };
+          
+          xhr.open('GET', url, true);
+          xhr.setRequestHeader('Accept', 'application/json');
+          debug('XHR sending...');
+          xhr.send();
+        });
+      }
+      
+      // Format currency
+      function fmt(num) {
+        return '₹' + (num || 0).toLocaleString('en-IN');
+      }
+      
+      // Render functions
+      function renderHeader() {
+        return '<header class="header"><div class="logo">R</div><span style="font-weight:700;font-size:18px;">RentFlow</span></header>';
+      }
+      
+      function renderBottomNav() {
+        const items = [
+          { id: 'dashboard', label: 'Home', icon: '🏠' },
+          { id: 'properties', label: 'Properties', icon: '🏢' },
+          { id: 'tenants', label: 'Tenants', icon: '👥' },
+          { id: 'income', label: 'Income', icon: '💰' },
+          { id: 'expenses', label: 'Expenses', icon: '💸' }
+        ];
+        
+        let html = '<nav class="bottom-nav">';
+        items.forEach(function(item) {
+          const active = currentPage === item.id ? 'active' : '';
+          html += '<button class="nav-item ' + active + '" onclick="setPage(\'' + item.id + '\')">';
+          html += '<span style="font-size:20px;">' + item.icon + '</span>';
+          html += item.label + '</button>';
+        });
+        html += '</nav>';
+        return html;
+      }
+      
+      function renderDashboard() {
+        if (!dashboardData) {
+          return '<div class="loading">Loading dashboard...</div>';
+        }
+        
+        if (dashboardData.error) {
+          return '<div class="error"><strong>Error:</strong> ' + dashboardData.error + '<br><small>API: ' + API_BASE + '</small><br><button onclick="testConnection()" style="margin-top:10px;margin-right:10px;padding:8px 16px;">Test Connection</button><button onclick="loadDashboard()" style="margin-top:10px;padding:8px 16px;">Retry</button></div>';
+        }
+        
+        const stats = dashboardData.stats || {};
+        
+        return '<div class="screen"><div class="content">' +
+          '<h1 style="margin-bottom:16px;">Dashboard</h1>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">' +
+            '<div class="card"><div class="stat-value">' + (stats.totalProperties || 0) + '</div><div class="stat-label">Properties</div></div>' +
+            '<div class="card"><div class="stat-value">' + (stats.totalTenants || 0) + '</div><div class="stat-label">Tenants</div></div>' +
+            '<div class="card"><div class="stat-value" style="color:#22c55e;">' + fmt(stats.monthlyCollection) + '</div><div class="stat-label">Monthly Income</div></div>' +
+            '<div class="card"><div class="stat-value" style="color:#ef4444;">' + fmt(stats.monthlyExpenses) + '</div><div class="stat-label">Monthly Expenses</div></div>' +
+          '</div>' +
+          '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;"><span style="color:#6b7280;">Net Income</span><span style="font-size:20px;font-weight:700;color:#22c55e;">' + fmt(stats.netIncome) + '</span></div></div>' +
+          '<div style="margin-top:20px;padding:12px;background:#1a1d27;border-radius:8px;"><small style="color:#6b7280;">API: ' + API_BASE + '</small></div>' +
+          '</div></div>';
+      }
+      
+      function renderPage() {
+        const pages = {
+          dashboard: renderDashboard,
+          properties: function() { return '<div class="screen"><div class="content"><h1>Properties</h1><div class="card"><p style="color:#6b7280;">Coming soon...</p></div></div></div>'; },
+          tenants: function() { return '<div class="screen"><div class="content"><h1>Tenants</h1><div class="card"><p style="color:#6b7280;">Coming soon...</p></div></div></div>'; },
+          income: function() { return '<div class="screen"><div class="content"><h1>Income</h1><div class="card"><p style="color:#6b7280;">Coming soon...</p></div></div></div>'; },
+          expenses: function() { return '<div class="screen"><div class="content"><h1>Expenses</h1><div class="card"><p style="color:#6b7280;">Coming soon...</p></div></div></div>'; }
+        };
+        
+        const contentFn = pages[currentPage] || renderDashboard;
+        document.getElementById('root').innerHTML = renderHeader() + contentFn() + renderBottomNav();
+      }
+      
+      async function loadDashboard() {
+        try {
+          document.getElementById('root').innerHTML = renderHeader() + '<div class="loading">Loading dashboard...</div>' + renderBottomNav();
+          const data = await api('/dashboard');
+          dashboardData = data;
+        } catch (err) {
+          dashboardData = { error: err.message };
+        }
+        renderPage();
+      }
+      
+      async function findWorkingEndpoint() {
+        const allEndpoints = [API_BASE, ...ALT_ENDPOINTS];
+        debug('Testing ' + allEndpoints.length + ' endpoints...');
+        
+        for (const endpoint of allEndpoints) {
+          debug('Trying: ' + endpoint);
+          try {
+            const result = await testEndpoint(endpoint);
+            if (result) {
+              debug('SUCCESS: ' + endpoint);
+              currentEndpoint = endpoint;
+              return endpoint;
+            }
+          } catch (e) {
+            debug('FAILED: ' + endpoint + ' - ' + e.message);
+          }
+        }
+        throw new Error('No working endpoint found');
+      }
+      
+      function testEndpoint(baseUrl) {
+        return new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.timeout = 3000;
+          
+          xhr.onload = function() {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve(true);
+            } else {
+              reject(new Error('HTTP ' + xhr.status));
+            }
+          };
+          xhr.onerror = () => reject(new Error('Network error'));
+          xhr.ontimeout = () => reject(new Error('Timeout'));
+          
+          xhr.open('GET', baseUrl + '/api/dashboard', true);
+          xhr.send();
+        });
+      }
+      
+      async function testConnection() {
+        try {
+          const working = await findWorkingEndpoint();
+          dashboardData = { 
+            error: 'Found working endpoint: ' + working + '<br>Click Retry to load dashboard'
+          };
+        } catch (err) {
+          dashboardData = { 
+            error: 'No working endpoint found.<br>Tried: ' + [API_BASE, ...ALT_ENDPOINTS].join(', ')
+          };
+        }
+        renderPage();
+      }
+      
+      function setPage(page) {
+        currentPage = page;
+        renderPage();
+        if (page === 'dashboard' && !dashboardData) {
+          loadDashboard();
+        }
+      }
+      
+      // Error handling
+      window.onerror = function(msg, url, line, col, error) {
+        document.getElementById('root').innerHTML = '<div class="error">Error: ' + msg + '<br>Line: ' + line + '</div>';
+        return true;
+      };
+      
+      // Start the app
+      document.getElementById('root').innerHTML = '<div class="loading">Starting app...</div>';
+      loadDashboard();
+    </script>
   </body>
 </html>

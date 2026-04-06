@@ -51,6 +51,21 @@ services:
       - ./frontend:/app
       - /app/node_modules
 
+  # Android APK Builder Service
+  android-builder:
+    build:
+      context: .
+      dockerfile: android-builder.multistage.Dockerfile
+    container_name: rental-android-builder
+    ports:
+      - "8080:8080"  # Serve APK via HTTP
+    volumes:
+      - ./android-output:/output
+    environment:
+      - ANDROID_HOME=/opt/android-sdk
+    # Multistage build already creates APK, just serve it
+
 volumes:
   mysql_data:
   uploads_data:
+  android_output:

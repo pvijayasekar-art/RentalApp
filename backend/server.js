@@ -6,7 +6,13 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-app.use(cors());
+// Allow all CORS origins for WebView compatibility
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: false
+}));
 app.use(express.json());
 
 // Ensure uploads directory exists
@@ -1960,8 +1966,8 @@ async function startServer() {
   // Attempt auto-recovery
   await autoRecoverFromBackup();
   
-  // Start the server
-  const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  // Start the server - bind to 0.0.0.0 to accept external connections
+  const server = app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
   
   // Store server reference for shutdown handlers
   global.server = server;
