@@ -1,0 +1,34 @@
+# Documentation files (do not commit)
+COMPLETE_DOCUMENTATION.md
+DOCUMENTATION.md
+PROMPT.md
+SPEAKER_NOTES.md
+prompt-library.md
+
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Docker volumes (data persistence)
+mysql_data/

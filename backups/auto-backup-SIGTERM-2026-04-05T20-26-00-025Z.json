@@ -1,0 +1,137 @@
+{
+  "exported_at": "2026-04-05T20:26:00.045Z",
+  "version": "1.0",
+  "reason": "SIGTERM",
+  "tables": {
+    "properties": [
+      {
+        "id": 4,
+        "name": "Vilankurichi - 3rdFloor - 1BHK",
+        "address": "Coimbatore",
+        "type": "apartment",
+        "total_units": 3,
+        "monthly_rent": "11000.00",
+        "status": "active",
+        "created_at": "2026-04-05T09:29:49.000Z"
+      },
+      {
+        "id": 5,
+        "name": "Vilankurichi - 2ndFloor - 3BHK",
+        "address": "Coimbatore",
+        "type": "apartment",
+        "total_units": 2,
+        "monthly_rent": "22000.00",
+        "status": "active",
+        "created_at": "2026-04-05T09:30:36.000Z"
+      },
+      {
+        "id": 6,
+        "name": "Vilankurichi - 1stFloor - 3BHK",
+        "address": "Coimbatore",
+        "type": "apartment",
+        "total_units": 1,
+        "monthly_rent": "22000.00",
+        "status": "active",
+        "created_at": "2026-04-05T09:30:58.000Z"
+      }
+    ],
+    "tenants": [
+      {
+        "id": 1,
+        "name": "Gokulraj Sundhararajan",
+        "email": "",
+        "phone": "",
+        "aadhar_number": "213885037951",
+        "pan_number": "",
+        "emergency_contact": null,
+        "property_id": 4,
+        "unit_number": "3",
+        "lease_start": "2026-03-15T00:00:00.000Z",
+        "lease_end": "2026-12-31T00:00:00.000Z",
+        "security_deposit": "50000.00",
+        "status": "active",
+        "created_at": "2026-04-05T09:15:31.000Z"
+      }
+    ],
+    "collections": [
+      {
+        "id": 7,
+        "tenant_id": 1,
+        "property_id": 6,
+        "amount": "5500.00",
+        "payment_date": "2026-04-05T00:00:00.000Z",
+        "payment_method": "bank_transfer",
+        "month_year": "April 2026",
+        "status": "paid",
+        "notes": "Yes Bank",
+        "reference_number": "2026040569119450",
+        "created_at": "2026-04-05T09:33:24.000Z",
+        "category": "rent"
+      },
+      {
+        "id": 8,
+        "tenant_id": 1,
+        "property_id": 6,
+        "amount": "50000.00",
+        "payment_date": "2026-03-05T00:00:00.000Z",
+        "payment_method": "bank_transfer",
+        "month_year": "March 2026",
+        "status": "paid",
+        "notes": "",
+        "reference_number": "2026030357980601",
+        "created_at": "2026-04-05T10:44:19.000Z",
+        "category": "deposit"
+      }
+    ],
+    "expenses": [],
+    "ledger_entries": [
+      {
+        "id": 1,
+        "entry_date": "2026-04-05T00:00:00.000Z",
+        "entry_type": "income",
+        "category": "rent",
+        "description": "Payment from GokulrajSundhararajan - April 2026",
+        "amount": "5500.00",
+        "gst_amount": "990.00",
+        "tds_amount": "550.00",
+        "net_amount": "4950.00",
+        "reference_id": 7,
+        "reference_type": "collection",
+        "property_id": 6,
+        "tenant_id": 1,
+        "vendor": "GokulrajSundhararajan",
+        "pan_number": null,
+        "gst_number": null,
+        "fy_year": "2026-2027",
+        "quarter": "Q1",
+        "notes": null,
+        "created_at": "2026-04-05T10:24:38.000Z"
+      },
+      {
+        "id": 3,
+        "entry_date": "2026-03-05T00:00:00.000Z",
+        "entry_type": "income",
+        "category": "deposit",
+        "description": "Payment from GokulrajSundhararajan - March 2026",
+        "amount": "50000.00",
+        "gst_amount": "0.00",
+        "tds_amount": "0.00",
+        "net_amount": "50000.00",
+        "reference_id": 8,
+        "reference_type": "collection",
+        "property_id": 6,
+        "tenant_id": 1,
+        "vendor": "GokulrajSundhararajan",
+        "pan_number": null,
+        "gst_number": null,
+        "fy_year": "2025-2026",
+        "quarter": "Q4",
+        "notes": null,
+        "created_at": "2026-04-05T10:44:19.000Z"
+      }
+    ],
+    "tenant_documents": [],
+    "collection_documents": [],
+    "expense_documents": []
+  }
+}
