@@ -1,4 +1,4 @@
-# 🏠 RentFlow — Rental Management System
+# 🏠 Rental Management System
 
 A full-stack rental property management application with MySQL persistence, containerized with Docker. Built with React + Node.js/Express.
 
