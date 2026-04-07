@@ -14,10 +14,22 @@ captures
 .cxx
 local.properties
 
-# Local configuration files with sensitive data
+# Local configuration files with sensitive data (passwords, API keys, tokens)
 local-config.properties
 **/NetworkModule.kt.bak
 
 # Local helper scripts with personal paths
 setup-gradle.ps1
 *.local.ps1
+
+# Keystore files (signing keys - NEVER commit these!)
+*.jks
+*.keystore
+keystore.properties
+
+# Google Services (API keys, Firebase config)
+google-services.json
+
+# API Keys and Secrets
+secrets.properties
+credentials.properties

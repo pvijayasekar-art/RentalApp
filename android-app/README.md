@@ -114,6 +114,40 @@ The app follows Material Design 3 principles with:
 
 The APK will be at: `app/build/outputs/apk/release/app-release.apk`
 
+## Security & PII Protection
+
+This project is configured to **never commit personal information or secrets** to Git.
+
+### Protected Files (in .gitignore)
+
+| File | Contains | Action |
+|------|----------|--------|
+| `local.properties` | Android SDK path (may contain username) | Auto-ignored |
+| `*.jks`, `*.keystore` | Signing keys | **Never commit** |
+| `keystore.properties` | Key passwords | **Never commit** |
+| `secrets.properties` | API keys, tokens | **Never commit** |
+| `credentials.properties` | Login credentials | **Never commit** |
+| `google-services.json` | Firebase config | **Never commit** |
+| `setup-gradle.ps1` | Local helper script | **Never commit** |
+
+### NetworkModule.kt Safety
+
+The `BASE_URL` in NetworkModule.kt uses the emulator IP (`10.0.2.2:5000`). 
+**If you change this to your personal IP for testing**:
+```bash
+# Before committing, mask it:
+git update-index --skip-worktree android-app/app/src/main/java/com/rentalmanager/app/di/NetworkModule.kt
+```
+
+### Pre-Commit Checklist
+
+```bash
+cd android-app
+git status
+git diff --cached
+# Verify NO secrets or personal IPs are staged
+```
+
 ## Contributing
 
 This Android app is part of the Rental Manager project. Web changes should not affect this codebase.
