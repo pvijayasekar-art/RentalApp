@@ -160,14 +160,14 @@ app.get('/api/tenants', async (req, res) => {
 
 app.post('/api/tenants', async (req, res) => {
   const { name, email, phone, aadhar_number, pan_number, emergency_contact,
-          property_id, unit_number, lease_start, lease_end, security_deposit, status } = req.body;
+          property_id, unit_number, start_date, end_date, security_deposit, status } = req.body;
   try {
     const [result] = await pool.query(
       `INSERT INTO tenants (name,email,phone,aadhar_number,pan_number,emergency_contact,
-       property_id,unit_number,lease_start,lease_end,security_deposit,status) 
+       property_id,unit_number,start_date,end_date,security_deposit,status) 
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       [name, email, phone, aadhar_number, pan_number, emergency_contact,
-       property_id, unit_number, lease_start, lease_end, security_deposit || 0, status || 'active']
+       property_id, unit_number, start_date, end_date, security_deposit || 0, status || 'active']
     );
     res.json({ id: result.insertId, message: 'Tenant added successfully' });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -175,14 +175,14 @@ app.post('/api/tenants', async (req, res) => {
 
 app.put('/api/tenants/:id', async (req, res) => {
   const { name, email, phone, aadhar_number, pan_number, emergency_contact,
-          property_id, unit_number, lease_start, lease_end, security_deposit, status } = req.body;
+          property_id, unit_number, start_date, end_date, security_deposit, status } = req.body;
   try {
     await pool.query(
       `UPDATE tenants SET name=?,email=?,phone=?,aadhar_number=?,pan_number=?,
-       emergency_contact=?,property_id=?,unit_number=?,lease_start=?,
-       lease_end=?,security_deposit=?,status=? WHERE id=?`,
+       emergency_contact=?,property_id=?,unit_number=?,start_date=?,
+       end_date=?,security_deposit=?,status=? WHERE id=?`,
       [name, email, phone, aadhar_number, pan_number, emergency_contact,
-       property_id, unit_number, lease_start, lease_end, security_deposit, status, req.params.id]
+       property_id, unit_number, start_date, end_date, security_deposit, status, req.params.id]
     );
     res.json({ message: 'Tenant updated successfully' });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1353,8 +1353,8 @@ app.post('/api/backup/restore', async (req, res) => {
     if (tenants?.length) {
       for (const t of tenants) {
         await connection.query(
-          'INSERT INTO tenants (id,name,email,phone,aadhar_number,pan_number,emergency_contact,property_id,unit_number,lease_start,lease_end,security_deposit,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-          [t.id, t.name, t.email, t.phone, t.aadhar_number, t.pan_number, t.emergency_contact, t.property_id, t.unit_number, t.lease_start, t.lease_end, t.security_deposit, t.status, t.created_at]
+          'INSERT INTO tenants (id,name,email,phone,aadhar_number,pan_number,emergency_contact,property_id,unit_number,start_date,end_date,security_deposit,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [t.id, t.name, t.email, t.phone, t.aadhar_number, t.pan_number, t.emergency_contact, t.property_id, t.unit_number, t.start_date, t.end_date, t.security_deposit, t.status, t.created_at]
         );
       }
     }
@@ -1563,9 +1563,6 @@ app.get('/api/predictions', async (req, res) => {
       WHERE t.status = 'active'
     `);
     
-    // Calculate projected monthly income
-    const projectedMonthlyIncome = activeTenants.reduce((sum, t) => sum + parseFloat(t.monthly_rent || 0), 0);
-    
     // Get last 6 months of collection data for trend analysis
     const [monthlyHistory] = await pool.query(`
       SELECT DATE_FORMAT(payment_date,'%Y-%m') as month,
@@ -1578,6 +1575,64 @@ app.get('/api/predictions', async (req, res) => {
       ORDER BY month DESC
     `);
     
+    // Get tenant-specific collection data to identify partial month payments
+    const [tenantCollections] = await pool.query(`
+      SELECT c.tenant_id, c.amount, c.payment_date, c.month_year, p.monthly_rent, t.start_date
+      FROM collections c
+      JOIN tenants t ON c.tenant_id = t.id
+      JOIN properties p ON c.property_id = p.id
+      WHERE c.status = 'paid' 
+        AND c.payment_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+    `);
+    
+    // Calculate normalized monthly income accounting for partial months
+    // Group collections by month and identify partial payments
+    const monthDetails = {};
+    for (const col of tenantCollections) {
+      const paymentDate = new Date(col.payment_date);
+      const month = paymentDate.toISOString().substring(0, 7); // YYYY-MM
+      if (!monthDetails[month]) {
+        monthDetails[month] = { total: 0, fullMonths: 0, partialMonths: 0, expectedFull: 0 };
+      }
+      monthDetails[month].total += parseFloat(col.amount);
+      
+      // Check if this is a partial payment (less than 80% of monthly rent)
+      const rent = parseFloat(col.monthly_rent || 0);
+      const amount = parseFloat(col.amount);
+      if (rent > 0 && amount < rent * 0.8) {
+        monthDetails[month].partialMonths++;
+        // Add the difference to normalize to full month
+        monthDetails[month].expectedFull += rent;
+      } else {
+        monthDetails[month].fullMonths++;
+        monthDetails[month].expectedFull += amount;
+      }
+    }
+    
+    // Calculate projected income based on normalized full-month equivalents
+    let normalizedTotal = 0;
+    let normalizedCount = 0;
+    for (const month of Object.keys(monthDetails)) {
+      const details = monthDetails[month];
+      // If month had partial payments, use normalized value
+      if (details.partialMonths > 0) {
+        normalizedTotal += details.expectedFull;
+      } else {
+        normalizedTotal += details.total;
+      }
+      normalizedCount++;
+    }
+    
+    const projectedMonthlyIncome = normalizedCount > 0 ? normalizedTotal / normalizedCount : 0;
+    
+    // Calculate potential income from active tenants (for comparison)
+    const potentialMonthlyIncome = activeTenants.reduce((sum, t) => sum + parseFloat(t.monthly_rent || 0), 0);
+    
+    // Collection rate compares projected income to potential income from active tenants
+    const collectionRate = potentialMonthlyIncome > 0 
+      ? Math.min((projectedMonthlyIncome / potentialMonthlyIncome) * 100, 100)
+      : 0;
+    
     // Get expense history for trend
     const [expenseHistory] = await pool.query(`
       SELECT DATE_FORMAT(expense_date,'%Y-%m') as month,
@@ -1589,15 +1644,6 @@ app.get('/api/predictions', async (req, res) => {
       GROUP BY DATE_FORMAT(expense_date,'%Y-%m'), category
       ORDER BY month DESC
     `);
-    
-    // Calculate average collection rate
-    const totalExpected = activeTenants.length * projectedMonthlyIncome / (activeTenants.length || 1);
-    const avgMonthlyCollection = monthlyHistory.length > 0
-      ? monthlyHistory.reduce((sum, m) => sum + parseFloat(m.collected), 0) / monthlyHistory.length
-      : 0;
-    const collectionRate = projectedMonthlyIncome > 0 
-      ? (avgMonthlyCollection / projectedMonthlyIncome) * 100 
-      : 0;
     
     // Calculate 3-month forecast
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -1675,7 +1721,7 @@ app.get('/api/predictions', async (req, res) => {
     // Risk indicators
     const riskIndicators = {
       latePayments: await pool.query(`SELECT COUNT(*) as count FROM collections WHERE status IN ('pending', 'overdue') AND MONTH(payment_date) = MONTH(CURDATE())`),
-      expiringLeases: await pool.query(`SELECT COUNT(*) as count FROM tenants WHERE status = 'active' AND lease_end <= DATE_ADD(CURDATE(), INTERVAL 3 MONTH)`),
+      expiringLeases: await pool.query(`SELECT COUNT(*) as count FROM tenants WHERE status = 'active' AND end_date <= DATE_ADD(CURDATE(), INTERVAL 3 MONTH)`),
       highExpenseCategories: await pool.query(`
         SELECT category, SUM(amount) as total, AVG(amount) as avg
         FROM expenses
@@ -1850,9 +1896,12 @@ async function autoRecoverFromBackup() {
       
       if (tenants?.length) {
         for (const t of tenants) {
+          // Handle both old (lease_start/lease_end) and new (start_date/end_date) backup formats
+          const startDate = t.start_date || t.lease_start;
+          const endDate = t.end_date || t.lease_end;
           await connection.query(
-            'INSERT INTO tenants (id,name,email,phone,aadhar_number,pan_number,emergency_contact,property_id,unit_number,lease_start,lease_end,security_deposit,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-            [t.id, t.name, t.email, t.phone, t.aadhar_number, t.pan_number, t.emergency_contact, t.property_id, t.unit_number, toMySQLDateTime(t.lease_start), toMySQLDateTime(t.lease_end), t.security_deposit, t.status, toMySQLDateTime(t.created_at)]
+            'INSERT INTO tenants (id,name,email,phone,aadhar_number,pan_number,emergency_contact,property_id,unit_number,start_date,end_date,security_deposit,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [t.id, t.name, t.email, t.phone, t.aadhar_number, t.pan_number, t.emergency_contact, t.property_id, t.unit_number, toMySQLDateTime(startDate), toMySQLDateTime(endDate), t.security_deposit, t.status, toMySQLDateTime(t.created_at)]
           );
         }
       }
@@ -1963,6 +2012,9 @@ async function startServer() {
     process.exit(1);
   }
   
+  // Run database migrations
+  await runMigrations();
+  
   // Attempt auto-recovery
   await autoRecoverFromBackup();
   
@@ -1971,6 +2023,64 @@ async function startServer() {
   
   // Store server reference for shutdown handlers
   global.server = server;
+  
+  // Schedule daily backup housekeeping (runs every 24 hours)
+  setInterval(() => {
+    console.log('[BACKUP] Running scheduled daily backup housekeeping...');
+    cleanupOldBackups();
+  }, 24 * 60 * 60 * 1000); // 24 hours in milliseconds
+  
+  // Run initial cleanup on startup
+  console.log('[BACKUP] Running initial backup housekeeping...');
+  await cleanupOldBackups();
+}
+
+// ─── DATABASE MIGRATIONS ────────────────────────────────────────────────────
+async function runMigrations() {
+  try {
+    console.log('[MIGRATION] Checking for pending migrations...');
+    
+    // Check if tenants table has lease_start column (old schema)
+    const [columns] = await pool.query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_NAME = 'tenants' AND COLUMN_NAME IN ('lease_start', 'lease_end')
+    `);
+    
+    const hasLeaseStart = columns.some(c => c.COLUMN_NAME === 'lease_start');
+    const hasLeaseEnd = columns.some(c => c.COLUMN_NAME === 'lease_end');
+    
+    if (hasLeaseStart || hasLeaseEnd) {
+      console.log('[MIGRATION] Found old lease column names, running migration 002...');
+      
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        
+        // Rename columns
+        if (hasLeaseStart) {
+          await connection.query(`ALTER TABLE tenants CHANGE COLUMN lease_start start_date DATE`);
+          console.log('[MIGRATION] Renamed lease_start to start_date');
+        }
+        if (hasLeaseEnd) {
+          await connection.query(`ALTER TABLE tenants CHANGE COLUMN lease_end end_date DATE`);
+          console.log('[MIGRATION] Renamed lease_end to end_date');
+        }
+        
+        await connection.commit();
+        console.log('[MIGRATION] Migration 002 completed successfully');
+      } catch (err) {
+        await connection.rollback();
+        console.error('[MIGRATION] Migration failed:', err.message);
+      } finally {
+        connection.release();
+      }
+    } else {
+      console.log('[MIGRATION] No pending migrations');
+    }
+  } catch (err) {
+    console.error('[MIGRATION] Error checking migrations:', err.message);
+  }
 }
 
 startServer();
@@ -2016,10 +2126,42 @@ async function createAutoBackup(reason) {
     
     fs.writeFileSync(backupFile, JSON.stringify(backupData, null, 2));
     console.log(`[BACKUP] Automatic backup saved: ${backupFile}`);
+    
+    // Cleanup old backups - keep only last 3
+    await cleanupOldBackups();
+    
     return backupFile;
   } catch (err) {
     console.error('[BACKUP] Failed to create automatic backup:', err.message);
     return null;
+  }
+}
+
+// ─── BACKUP HOUSEKEEPING - Keep only last 3 backups ─────────────────────────
+async function cleanupOldBackups() {
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) return;
+    
+    const files = fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.endsWith('.json') && f.startsWith('auto-backup-'))
+      .map(f => {
+        const stats = fs.statSync(path.join(BACKUP_DIR, f));
+        return { filename: f, path: path.join(BACKUP_DIR, f), mtime: stats.mtime };
+      })
+      .sort((a, b) => b.mtime - a.mtime); // Sort by time, newest first
+    
+    // Keep only last 3 backups
+    const filesToDelete = files.slice(3);
+    
+    if (filesToDelete.length > 0) {
+      console.log(`[BACKUP] Housekeeping: Removing ${filesToDelete.length} old backup(s), keeping last 3`);
+      for (const file of filesToDelete) {
+        fs.unlinkSync(file.path);
+        console.log(`[BACKUP] Deleted old backup: ${file.filename}`);
+      }
+    }
+  } catch (err) {
+    console.error('[BACKUP] Failed to cleanup old backups:', err.message);
   }
 }
 

@@ -338,7 +338,7 @@ function Tenants() {
   const [extractedData, setExtractedData] = useState({ name: '', dateOfBirth: '', aadharNumber: '', panNumber: '', address: '', rawText: '', error: '' });
   const [extracting, setExtracting] = useState(false);
   const [search, setSearch] = useState("");
-  const blank = { name:"",email:"",phone:"",aadhar_number:"",pan_number:"",emergency_contact:"",property_id:"",unit_number:"",lease_start:"",lease_end:"",security_deposit:"",status:"active" };
+  const blank = { name:"",email:"",phone:"",aadhar_number:"",pan_number:"",emergency_contact:"",property_id:"",unit_number:"",start_date:"",end_date:"",security_deposit:"",status:"active" };
   const [form, setForm] = useState(blank);
   const load = useCallback(async () => {
     const [t, p] = await Promise.all([api("/tenants"), api("/properties")]);
@@ -358,7 +358,7 @@ function Tenants() {
   };
   
   const open = (item) => { 
-    if (item) setForm({ ...item, lease_start: item.lease_start?.slice(0,10)||"", lease_end: item.lease_end?.slice(0,10)||"" }); 
+    if (item) setForm({ ...item, start_date: item.start_date?.slice(0,10)||"", end_date: item.end_date?.slice(0,10)||"" }); 
     else setForm(blank); 
     setSelectedFile(null);
     setModal(item||true); 
@@ -541,7 +541,7 @@ function Tenants() {
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
           <thead style={{background:"var(--bg)"}}>
             <tr style={{color:"var(--muted)",fontWeight:600,textTransform:"uppercase",fontSize:"11px",letterSpacing:"0.5px"}}>
-              {["ID","Tenant","Contact","Property/Unit","IDs","Lease Period","Deposit","Status",""].map((h,i) => (
+              {["ID","Tenant","Contact","Property/Unit","IDs","Tenancy Period","Deposit","Status",""].map((h,i) => (
                 <th key={i} style={{textAlign:"left",padding:"12px 16px",borderBottom:"1px solid var(--border)"}}>{h}</th>
               ))}
             </tr>
@@ -564,8 +564,8 @@ function Tenants() {
                   <div>PAN: {t.pan_number||"—"}</div>
                 </td>
                 <td style={{padding:"12px 16px",fontSize:"12px",color:"var(--muted)"}}>
-                  <div>{fmtDate(t.lease_start)}</div>
-                  <div>to {fmtDate(t.lease_end)}</div>
+                  <div>{fmtDate(t.start_date)}</div>
+                  <div>to {fmtDate(t.end_date)}</div>
                 </td>
                 <td style={{padding:"12px 16px",fontWeight:700,color:"var(--text)"}}>{fmt(t.security_deposit)}</td>
                 <td style={{padding:"12px 16px"}}><Badge status={t.status}/></td>
@@ -593,8 +593,8 @@ function Tenants() {
             <Field label="PAN Number"><Input value={form.pan_number} onChange={e => set("pan_number",e.target.value)} placeholder="ABCDE1234F"/></Field>
             <Field label="Property"><Select value={form.property_id} onChange={e => pickProperty(e.target.value)}><option value="">Select property…</option>{properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
             <Field label="Unit Number"><Input value={form.unit_number} onChange={e => set("unit_number",e.target.value)} placeholder="A-101"/></Field>
-            <Field label="Lease Start"><Input type="date" value={form.lease_start} onChange={e => set("lease_start",e.target.value)}/></Field>
-            <Field label="Lease End"><Input type="date" value={form.lease_end} onChange={e => set("lease_end",e.target.value)}/></Field>
+            <Field label="Start Date"><Input type="date" value={form.start_date} onChange={e => set("start_date",e.target.value)}/></Field>
+            <Field label="End Date"><Input type="date" value={form.end_date} onChange={e => set("end_date",e.target.value)}/></Field>
             <Field label="Security Deposit (₹)"><Input type="number" value={form.security_deposit} onChange={e => set("security_deposit",e.target.value)} placeholder="36000"/></Field>
             <Field label="Status"><Select value={form.status} onChange={e => set("status",e.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option><option value="notice">Notice Period</option></Select></Field>
             <div style={{gridColumn:"1/-1"}}><Field label="Upload Document (optional)">
@@ -1831,7 +1831,7 @@ export default function App() {
                 <Icon name="home" size={18}/>
               </div>
               <div>
-                <div style={{fontWeight:800,fontSize:"15px",color:"var(--text)"}}>RentFlow</div>
+                <div style={{fontWeight:800,fontSize:"15px",color:"var(--text)"}}>Rental Manager</div>
                 <div style={{fontSize:"11px",color:"var(--muted)"}}>Property Manager</div>
               </div>
             </div>
@@ -1850,7 +1850,7 @@ export default function App() {
             ))}
           </nav>
           <div style={{padding:"16px",borderTop:"1px solid var(--border)",fontSize:"11px",color:"var(--muted)",textAlign:"center",lineHeight:1.6}}>
-            <div>RentFlow v1.0</div>
+            <div>Rental Manager v1.0</div>
             <div>All amounts in ₹ INR</div>
           </div>
         </aside>

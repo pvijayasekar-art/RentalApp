@@ -24,8 +24,8 @@ CREATE TABLE IF NOT EXISTS tenants (
   emergency_contact VARCHAR(20),
   property_id INT,
   unit_number VARCHAR(50),
-  lease_start DATE,
-  lease_end DATE,
+  start_date DATE,
+  end_date DATE,
   security_deposit DECIMAL(12,2) DEFAULT 0,
   status ENUM('active','inactive','notice') DEFAULT 'active',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -137,7 +137,7 @@ INSERT INTO properties (name, address, type, total_units, monthly_rent, status) 
 ('Green Villa', '45, Anna Nagar, Chennai, Tamil Nadu 600040', 'villa', 1, 45000.00, 'active'),
 ('Sharma Commercial', '78, Connaught Place, New Delhi 110001', 'commercial', 4, 35000.00, 'active');
 
-INSERT INTO tenants (name, email, phone, aadhar_number, pan_number, property_id, unit_number, lease_start, lease_end, security_deposit, status) VALUES
+INSERT INTO tenants (name, email, phone, aadhar_number, pan_number, property_id, unit_number, start_date, end_date, security_deposit, status) VALUES
 ('Rajesh Kumar', 'rajesh.kumar@email.com', '9876543210', '2345 6789 0123', 'ABCPK1234D', 1, 'A-101', '2024-01-01', '2025-12-31', 36000.00, 'active'),
 ('Priya Sharma', 'priya.s@email.com', '9123456780', '3456 7890 1234', 'BCQPS5678E', 1, 'A-102', '2024-03-01', '2025-02-28', 36000.00, 'active'),
 ('Amit Singh', 'amit.singh@email.com', '9988776655', '4567 8901 2345', 'CDRQA9012F', 2, 'Villa', '2023-06-01', '2024-05-31', 90000.00, 'notice'),
