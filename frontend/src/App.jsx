@@ -412,8 +412,7 @@ function Tenants() {
     if (!form.name?.trim()) newErrors.name = "Full Name is required";
     if (!form.phone?.trim()) newErrors.phone = "Phone number is required";
     else if (!/^[0-9]{10}$/.test(form.phone?.replace(/\s/g, ''))) newErrors.phone = "Enter valid 10-digit phone number";
-    if (!form.email?.trim()) newErrors.email = "Email is required";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) newErrors.email = "Enter valid email address";
+    if (form.email?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) newErrors.email = "Enter valid email address";
     if (!form.property_id) newErrors.property_id = "Property is required";
     if (!form.unit_number?.trim()) newErrors.unit_number = "Unit Number is required";
     
@@ -706,7 +705,7 @@ function Tenants() {
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 16px"}}>
             <Field label="Full Name *" error={errors.name}><Input value={form.name} onChange={e => set("name",e.target.value)} placeholder="Rajesh Kumar" style={errors.name ? {borderColor:"#ef4444"} : {}}/></Field>
             <Field label="Phone *" error={errors.phone}><Input value={form.phone} onChange={e => set("phone",e.target.value)} placeholder="9876543210" style={errors.phone ? {borderColor:"#ef4444"} : {}}/></Field>
-            <Field label="Email *" error={errors.email}><Input type="email" value={form.email} onChange={e => set("email",e.target.value)} placeholder="tenant@email.com" style={errors.email ? {borderColor:"#ef4444"} : {}}/></Field>
+            <Field label="Email" error={errors.email}><Input type="email" value={form.email} onChange={e => set("email",e.target.value)} placeholder="tenant@email.com (optional)" style={errors.email ? {borderColor:"#ef4444"} : {}}/></Field>
             <Field label="Emergency Contact"><Input value={form.emergency_contact} onChange={e => set("emergency_contact",e.target.value)} placeholder="9876543211"/></Field>
             <Field label="Aadhar Number"><Input value={form.aadhar_number} onChange={e => set("aadhar_number",e.target.value)} placeholder="1234 5678 9012"/></Field>
             <Field label="PAN Number"><Input value={form.pan_number} onChange={e => set("pan_number",e.target.value)} placeholder="ABCDE1234F"/></Field>
