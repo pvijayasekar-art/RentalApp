@@ -67,6 +67,9 @@ const Icon = ({ name, size = 20 }) => {
     home: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></svg>,
     file: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>,
     image: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>,
+    database: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="2"/><path d="M21 12h-6m-6 0h-6"/><path d="M12 17v6"/><circle cx="12" cy="12" r="1"/><path d="M12 9v3"/></svg>,
+    'file-text': <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>,
+    report: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>,
   };
   return icons[name] || null;
 };
@@ -314,7 +317,7 @@ function Dashboard() {
 function Properties() {
   const [items, setItems] = useState([]);
   const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({ name:"",address:"",type:"apartment",total_units:1,monthly_rent:"",status:"active" });
+  const [form, setForm] = useState({ name:"",address:"",type:"apartment",total_units:1,monthly_rent:"",status:"active",eb_service_number:"",property_assessment_number:"",water_connection_number:"" });
   const load = useCallback(() => api("/properties").then(setItems), []);
   useEffect(() => { load(); }, [load]);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -353,6 +356,21 @@ function Properties() {
               </div>
             </div>
             <div style={{fontSize:"13px",color:"var(--muted)",marginBottom:"16px",lineHeight:"1.5"}}>{p.address}</div>
+            {p.eb_service_number && (
+              <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>
+                <strong>EB Service:</strong> {p.eb_service_number}
+              </div>
+            )}
+            {p.property_assessment_number && (
+              <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>
+                <strong>Property Assessment:</strong> {p.property_assessment_number}
+              </div>
+            )}
+            {p.water_connection_number && (
+              <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"8px"}}>
+                <strong>Water Connection:</strong> {p.water_connection_number}
+              </div>
+            )}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"12px",padding:"12px",background:"var(--bg)",borderRadius:"10px"}}>
               <div><div style={{fontSize:"11px",color:"var(--muted)",marginBottom:"4px",textTransform:"uppercase",letterSpacing:"0.5px"}}>Rent/Month</div><div style={{fontWeight:700,color:"var(--accent)",fontSize:"15px"}}>{fmt(p.monthly_rent)}</div></div>
               <div><div style={{fontSize:"11px",color:"var(--muted)",marginBottom:"4px",textTransform:"uppercase",letterSpacing:"0.5px"}}>Units</div><div style={{fontWeight:700,color:"var(--text)"}}>{p.total_units}</div></div>
@@ -377,6 +395,9 @@ function Properties() {
             <Field label="Type"><Select value={form.type} onChange={e => set("type",e.target.value)}><option value="apartment">Apartment</option><option value="house">House</option><option value="villa">Villa</option><option value="commercial">Commercial</option></Select></Field>
             <Field label="Monthly Rent (₹)"><Input type="number" value={form.monthly_rent} onChange={e => set("monthly_rent",e.target.value)} placeholder="18000"/></Field>
             <Field label="Total Units"><Input type="number" value={form.total_units} onChange={e => set("total_units",e.target.value)}/></Field>
+            <Field label="EB Service Number (Optional)"><Input value={form.eb_service_number} onChange={e => set("eb_service_number",e.target.value)} placeholder="EB Service Number"/></Field>
+            <Field label="Property Assessment Number (Optional)"><Input value={form.property_assessment_number} onChange={e => set("property_assessment_number",e.target.value)} placeholder="Property Assessment Number"/></Field>
+            <Field label="Water Connection Number (Optional)"><Input value={form.water_connection_number} onChange={e => set("water_connection_number",e.target.value)} placeholder="Water Connection Number"/></Field>
             <Field label="Status"><Select value={form.status} onChange={e => set("status",e.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option><option value="maintenance">Maintenance</option></Select></Field>
           </div>
           <div style={{display:"flex",gap:"10px",justifyContent:"flex-end",marginTop:"8px"}}>
@@ -1473,13 +1494,29 @@ function Predictions() {
   const [loading, setLoading] = useState(true);
   
   useEffect(() => { 
-    api("/predictions").then(d => { setData(d); setLoading(false); }); 
+    api("/predictions").then(d => { setData(d); setLoading(false); })
+    .catch(err => { 
+      console.error('Failed to load predictions:', err);
+      setLoading(false); 
+    });
   }, []);
   
   if (loading) return <div style={{color:"var(--muted)",padding:"40px",textAlign:"center"}}>Loading predictions...</div>;
   if (!data) return <div style={{color:"var(--muted)",padding:"40px",textAlign:"center"}}>Failed to load predictions</div>;
   
-  const { summary, forecast, propertyPredictions, yearEndProjections, risks, recommendations } = data;
+  // Safely extract data with defaults
+  const summary = data.summary || null;
+  const forecast = data.forecast || null;
+  const propertyPredictions = data.propertyPredictions || null;
+  const yearEndProjections = data.yearEndProjections || null;
+  const risks = data.risks || null;
+  const recommendations = data.recommendations || null;
+  
+  // Defensive check for forecast data
+  if (!forecast || !Array.isArray(forecast)) {
+    console.error('Forecast data is missing or not an array:', data);
+    return <div style={{color:"var(--muted)",padding:"40px",textAlign:"center"}}>Error loading forecast data</div>;
+  }
   
   const confidenceColor = (c) => c === 'high' ? '#22c55e' : c === 'medium' ? '#f59e0b' : '#ef4444';
   const riskColor = (r) => r === 'high' ? '#ef4444' : r === 'medium' ? '#f59e0b' : '#22c55e';
@@ -1497,6 +1534,11 @@ function Predictions() {
         <StatCard label="Collection Rate" value={`${summary.averageCollectionRate}%`} icon="trend" color="#3b82f6" sub={`Based on ${summary.monthsOfHistory} months data`}/>
         <StatCard label="Year-End Projection" value={fmt(yearEndProjections.projectedNetIncome)} icon="crystal" color="#f97316" sub="Estimated net income"/>
         <StatCard label="Risk Alerts" value={risks.latePayments + risks.expiringLeases} icon="warn" color={risks.latePayments > 0 ? '#ef4444' : '#22c55e'} sub={risks.latePayments > 0 ? 'Action required' : 'All clear'}/>
+        
+        {/* Occupancy Stats */}
+        <StatCard label="Total Units" value={summary.total_units} icon="building" color="#3b82f6" sub={`${summary.occupied_units} occupied`}/>
+        <StatCard label="Occupancy Rate" value={`${summary.occupancy_rate}%`} icon="home" color={summary.occupancy_rate >= 80 ? '#22c55e' : summary.occupancy_rate >= 60 ? '#f59e0b' : '#ef4444'} sub={`${summary.vacant_units} vacant units`}/>
+        <StatCard label="Vacant Units" value={summary.vacant_units} icon="users" color="#ef4444" sub="Available for rent"/>
       </div>
       
       {/* Recommendations */}
@@ -1523,37 +1565,36 @@ function Predictions() {
         </div>
       )}
       
-      {/* 3-Month Forecast */}
+      {/* Financial Year Forecast */}
       <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"16px",padding:"24px",marginBottom:"28px"}}>
-        <h3 style={{fontSize:"15px",fontWeight:700,color:"var(--text)",margin:"0 0 20px"}}>3-Month Revenue Forecast</h3>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"16px"}}>
+        <h3 style={{fontSize:"15px",fontWeight:700,color:"var(--text)",margin:"0 0 20px"}}>Current Financial Year Forecast ({getCurrentFinancialYear()})</h3>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:"12px"}}>
           {forecast.map((f, i) => (
             <div key={i} style={{
-              padding:"16px",borderRadius:"12px",background:"var(--bg)",border:"1px solid var(--border)",
+              padding:"14px",borderRadius:"10px",background:"var(--bg)",border:"1px solid var(--border)",
               position:"relative",overflow:"hidden"
             }}>
-              <div style={{
-                position:"absolute",top:0,left:0,right:0,height:"4px",
-                background: confidenceColor(f.confidence)
-              }}/>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}}>
-                <span style={{fontSize:"14px",fontWeight:700,color:"var(--text)"}}>{f.month} {f.year}</span>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}>
+                <div>
+                  <div style={{fontSize:"12px",fontWeight:600,color:"var(--text)"}}>{f.month}</div>
+                  <div style={{fontSize:"10px",color:"var(--muted)"}}>{f.year}</div>
+                </div>
                 <span style={{
-                  fontSize:"11px",fontWeight:600,padding:"2px 8px",borderRadius:"10px",
-                  background: confidenceColor(f.confidence) + '22',color: confidenceColor(f.confidence),textTransform:"uppercase"
+                  padding:"2px 6px",borderRadius:"10px",fontSize:"9px",fontWeight:600,
+                  background:confidenceColor(f.confidence)+"22",color:confidenceColor(f.confidence)
                 }}>{f.confidence}</span>
               </div>
-              <div style={{marginBottom:"8px"}}>
-                <div style={{fontSize:"11px",color:"var(--muted)"}}>Predicted Income</div>
-                <div style={{fontSize:"18px",fontWeight:700,color:"#22c55e"}}>{fmt(f.predictedIncome)}</div>
+              <div style={{marginBottom:"6px"}}>
+                <div style={{fontSize:"10px",color:"var(--muted)",marginBottom:"1px"}}>Income</div>
+                <div style={{fontSize:"16px",fontWeight:700,color:"var(--accent)"}}>{fmt(f.predictedIncome)}</div>
               </div>
-              <div style={{marginBottom:"8px"}}>
-                <div style={{fontSize:"11px",color:"var(--muted)"}}>Predicted Expenses</div>
-                <div style={{fontSize:"14px",fontWeight:600,color:"#ef4444"}}>{fmt(f.predictedExpenses)}</div>
+              <div style={{marginBottom:"6px"}}>
+                <div style={{fontSize:"10px",color:"var(--muted)",marginBottom:"1px"}}>Expenses</div>
+                <div style={{fontSize:"13px",fontWeight:600,color:"#ef4444"}}>{fmt(f.predictedExpenses)}</div>
               </div>
               <div>
-                <div style={{fontSize:"11px",color:"var(--muted)"}}>Net Projection</div>
-                <div style={{fontSize:"16px",fontWeight:700,color:f.predictedNet > 0 ? '#22c55e' : '#ef4444'}}>{fmt(f.predictedNet)}</div>
+                <div style={{fontSize:"10px",color:"var(--muted)",marginBottom:"1px"}}>Net</div>
+                <div style={{fontSize:"13px",fontWeight:600,color:f.predictedNet >= 0 ? "#22c55e" : "#ef4444"}}>{fmt(f.predictedNet)}</div>
               </div>
             </div>
           ))}
@@ -2152,6 +2193,232 @@ function TDSReport() {
         </Modal>
       )}
     </Card>
+  );
+}
+
+// ─── PROFIT & LOSS REPORT ─────────────────────────────────────────────────────
+function ProfitLossReport() {
+  const [reportData, setReportData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [filters, setFilters] = useState({
+    startDate: '',
+    endDate: '',
+    propertyId: '',
+    period: 'monthly',
+    format: 'json'
+  });
+  const [properties, setProperties] = useState([]);
+
+  useEffect(() => {
+    // Load properties for filter dropdown
+    api('/properties').then(setProperties);
+  }, []);
+
+  const generateReport = async () => {
+    setLoading(true);
+    try {
+      const queryParams = new URLSearchParams();
+      if (filters.startDate) queryParams.append('startDate', filters.startDate);
+      if (filters.endDate) queryParams.append('endDate', filters.endDate);
+      if (filters.propertyId) queryParams.append('propertyId', filters.propertyId);
+      queryParams.append('period', filters.period);
+      queryParams.append('format', filters.format);
+      
+      const response = await fetch(`${API}/reports/profit-loss?${queryParams}`);
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      setReportData(data);
+      
+      // Handle export formats
+      if (filters.format !== 'json' && data.data) {
+        // For now, just show the data. PDF/Excel export would need additional implementation
+        setReportData(data.data);
+      }
+    } catch (err) {
+      alert('Failed to generate report: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const setFilter = (key, value) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const clearFilters = () => {
+    setFilters({ startDate: '', endDate: '', propertyId: '', period: 'monthly', format: 'json' });
+    setReportData(null);
+  };
+
+  const downloadReport = () => {
+    if (!reportData) return;
+    
+    const dataStr = JSON.stringify(reportData, null, 2);
+    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+    
+    const exportFileDefaultName = `profit-loss-report-${new Date().toISOString().split('T')[0]}.json`;
+    
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
+  };
+
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"24px"}}>
+        <div>
+          <h1 style={{fontSize:"26px",fontWeight:800,color:"var(--text)",margin:0}}>Profit & Loss Report</h1>
+          <p style={{color:"var(--muted)",margin:"4px 0 0",fontSize:"14px"}}>
+            Generate detailed financial reports for analysis and record-keeping
+          </p>
+        </div>
+      </div>
+
+      {/* Report Filters */}
+      <Card style={{marginBottom:"24px"}}>
+        <h3 style={{margin:"0 0 16px",fontSize:"15px",fontWeight:700,color:"var(--text)"}}>Report Filters</h3>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:"16px",alignItems:"end"}}>
+          <Field label="Start Date">
+            <Input 
+              type="date" 
+              value={filters.startDate} 
+              onChange={e => setFilter('startDate', e.target.value)} 
+            />
+          </Field>
+          <Field label="End Date">
+            <Input 
+              type="date" 
+              value={filters.endDate} 
+              onChange={e => setFilter('endDate', e.target.value)} 
+            />
+          </Field>
+          <Field label="Property">
+            <Select value={filters.propertyId} onChange={e => setFilter('propertyId', e.target.value)}>
+              <option value="">All Properties</option>
+              <option value="vilankurichi-all">Vilankurichi All</option>
+              {properties.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Period">
+            <Select value={filters.period} onChange={e => setFilter('period', e.target.value)}>
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="yearly">Yearly</option>
+            </Select>
+          </Field>
+          <Field label="Export Format">
+            <Select value={filters.format} onChange={e => setFilter('format', e.target.value)}>
+              <option value="json">JSON</option>
+              <option value="pdf">PDF (Coming Soon)</option>
+              <option value="excel">Excel (Coming Soon)</option>
+            </Select>
+          </Field>
+          <div style={{display:"flex",gap:"8px"}}>
+            <button 
+              onClick={clearFilters}
+              style={{padding:"8px 16px",background:"var(--card)",border:"1px solid var(--border)",borderRadius:"8px",color:"var(--text)",cursor:"pointer",fontSize:"14px"}}
+            >
+              Clear Filters
+            </button>
+            <button 
+              onClick={generateReport}
+              disabled={loading}
+              style={{padding:"8px 16px",background:"var(--primary)",border:"none",borderRadius:"8px",color:"white",cursor:"pointer",fontSize:"14px",opacity: loading ? 0.7 : 1}}
+            >
+              {loading ? 'Generating...' : 'Generate Report'}
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Report Results */}
+      {reportData && (
+        <Card style={{marginBottom:"24px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}}>
+            <h3 style={{margin:0,fontSize:"15px",fontWeight:700,color:"var(--text)"}}>
+              Report Generated on {new Date(reportData.generated_at).toLocaleDateString()}
+            </h3>
+            <button 
+              onClick={downloadReport}
+              style={{padding:"8px 16px",background:"var(--accent)",color:"#fff",border:"none",borderRadius:"8px",cursor:"pointer",fontSize:"14px"}}
+            >
+              Download JSON
+            </button>
+          </div>
+
+          {/* Summary Section */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:"16px",marginBottom:"24px"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:"16px",marginBottom:"24px"}}>
+              <div style={{padding:"16px",background:"var(--bg)",borderRadius:"10px",border:"1px solid var(--border)"}}>
+                <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>Total Income</div>
+                <div style={{fontSize:"20px",fontWeight:700,color:"#10b981"}}>{fmt(reportData.summary.total_income)}</div>
+              </div>
+              <div style={{padding:"16px",background:"var(--bg)",borderRadius:"10px",border:"1px solid var(--border)"}}>
+                <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>Total Expenses</div>
+                <div style={{fontSize:"20px",fontWeight:700,color:"#ef4444"}}>{fmt(reportData.summary.total_expenses)}</div>
+              </div>
+              <div style={{padding:"16px",background:"var(--bg)",borderRadius:"10px",border:"1px solid var(--border)"}}>
+                <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>Net Profit/Loss</div>
+                <div style={{fontSize:"20px",fontWeight:700,color: reportData.summary.net_profit >= 0 ? "#10b981" : "#ef4444"}}>
+                {fmt(reportData.summary.net_profit)}
+              </div>
+            </div>
+            <div style={{padding:"16px",background:"var(--bg)",borderRadius:"10px",border:"1px solid var(--border)"}}>
+                <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>Profit Margin</div>
+                <div style={{fontSize:"20px",fontWeight:700,color: reportData.summary.profit_margin >= 0 ? "#10b981" : "#ef4444"}}>
+                {reportData.summary.profit_margin}%
+              </div>
+            </div>
+            {reportData.summary.total_pending > 0 && (
+              <div style={{padding:"16px",background:"var(--bg)",borderRadius:"10px",border:"1px solid var(--border)"}}>
+                <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>Pending Payments</div>
+                <div style={{fontSize:"20px",fontWeight:700,color:"#f59e0b"}}>{fmt(reportData.summary.total_pending)}</div>
+              </div>
+            )}
+            <div style={{padding:"16px",background:"var(--bg)",borderRadius:"10px",border:"1px solid var(--border)"}}>
+              <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>Profit Margin</div>
+              <div style={{fontSize:"20px",fontWeight:700,color: reportData.summary.profit_margin >= 0 ? "#10b981" : "#ef4444"}}>
+                {reportData.summary.profit_margin}%
+              </div>
+            </div>
+          </div>
+          </div>
+
+          {/* Income and Expense Breakdown */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px"}}>
+            <div>
+              <h4 style={{margin:"0 0 12px",fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Income Breakdown</h4>
+              <div style={{background:"var(--bg)",borderRadius:"8px",padding:"12px"}}>
+                {reportData.income_breakdown.map((item, index) => (
+                  <div key={index} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:"1px solid var(--border-light)"}}>
+                    <span style={{fontSize:"13px"}}>{item.category}</span>
+                    <span style={{fontSize:"13px",fontWeight:600,color:"#10b981"}}>{fmt(item.total)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <h4 style={{margin:"0 0 12px",fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Expense Breakdown</h4>
+              <div style={{background:"var(--bg)",borderRadius:"8px",padding:"12px"}}>
+                {reportData.expense_breakdown.map((item, index) => (
+                  <div key={index} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:"1px solid var(--border-light)"}}>
+                    <span style={{fontSize:"13px"}}>{item.category}</span>
+                    <span style={{fontSize:"13px",fontWeight:600,color:"#ef4444"}}>{fmt(item.total)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+    </div>
   );
 }
 
@@ -2902,12 +3169,13 @@ const PAGES = [
   { id:"taxfiling", label:"Tax Filing", icon:"calculator" },
   { id:"ledger", label:"Ledger", icon:"book" },
   { id:"predictions", label:"Predictions", icon:"chart" },
+  { id:"profitlossreport", label:"P&L Report", icon:"report" },
 ];
 
 export default function App() {
   const [page, setPage] = useState("dashboard");
 
-  const pages = { dashboard: <Dashboard/>, properties: <Properties/>, tenants: <Tenants/>, collections: <Collections/>, expenses: <Expenses/>, receipts: <Receipts/>, predictions: <Predictions/>, taxfiling: <TaxFiling/>, ledger: <Ledger/> };
+  const pages = { dashboard: <Dashboard/>, properties: <Properties/>, tenants: <Tenants/>, collections: <Collections/>, expenses: <Expenses/>, receipts: <Receipts/>, predictions: <Predictions/>, taxfiling: <TaxFiling/>, ledger: <Ledger/>, profitlossreport: <ProfitLossReport/> };
 
   return (
     <>

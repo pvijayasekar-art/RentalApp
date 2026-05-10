@@ -121,8 +121,8 @@ app.post('/api/properties', async (req, res) => {
   const { name, address, type, total_units, monthly_rent, status } = req.body;
   try {
     const [result] = await pool.query(
-      'INSERT INTO properties (name,address,type,total_units,monthly_rent,status) VALUES (?,?,?,?,?,?)',
-      [name, address, type, total_units, monthly_rent, status || 'active']
+      'INSERT INTO properties (name,address,type,total_units,monthly_rent,status,eb_service_number,property_assessment_number,water_connection_number) VALUES (?,?,?,?,?,?,?,?,?)',
+      [name, address, type, total_units, monthly_rent, status || 'active', req.body.eb_service_number || null, req.body.property_assessment_number || null, req.body.water_connection_number || null]
     );
     res.json({ id: result.insertId, message: 'Property added successfully' });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -132,8 +132,8 @@ app.put('/api/properties/:id', async (req, res) => {
   const { name, address, type, total_units, monthly_rent, status } = req.body;
   try {
     await pool.query(
-      'UPDATE properties SET name=?,address=?,type=?,total_units=?,monthly_rent=?,status=? WHERE id=?',
-      [name, address, type, total_units, monthly_rent, status, req.params.id]
+      'UPDATE properties SET name=?,address=?,type=?,total_units=?,monthly_rent=?,status=?,eb_service_number=?,property_assessment_number=?,water_connection_number=? WHERE id=?',
+      [name, address, type, total_units, monthly_rent, status, req.body.eb_service_number || null, req.body.property_assessment_number || null, req.body.water_connection_number || null, req.params.id]
     );
     res.json({ message: 'Property updated successfully' });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -144,6 +144,286 @@ app.delete('/api/properties/:id', async (req, res) => {
     await pool.query('DELETE FROM properties WHERE id=?', [req.params.id]);
     res.json({ message: 'Property deleted' });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── PROFIT & LOSS REPORT ─────────────────────────────────────────────────────
+app.get('/api/reports/profit-loss', async (req, res) => {
+  try {
+    const { startDate, endDate, propertyId, format = 'json', period = 'monthly' } = req.query;
+    
+    // Build date filter
+    let dateFilter = '';
+    let params = [];
+    
+    if (startDate && endDate) {
+      dateFilter = 'WHERE payment_date BETWEEN ? AND ?';
+      params = [startDate, endDate];
+    } else if (startDate) {
+      dateFilter = 'WHERE payment_date >= ?';
+      params = [startDate];
+    } else if (endDate) {
+      dateFilter = 'WHERE payment_date <= ?';
+      params = [endDate];
+    }
+    
+    // Build property filter
+    let propertyFilter = '';
+    if (propertyId && propertyId !== 'all') {
+      if (propertyId === 'vilankurichi-all') {
+        propertyFilter = 'AND p.name LIKE "%Vilankurichi%"';
+      } else {
+        propertyFilter = 'AND c.property_id = ?';
+        params.push(propertyId);
+      }
+    }
+    
+    // Get income data
+    let incomeQuery = `
+      SELECT 
+        c.category,
+        SUM(c.amount) as total,
+        COUNT(*) as count,
+        DATE_FORMAT(MIN(c.payment_date), '%Y-%m-%d') as earliest_date,
+        DATE_FORMAT(MAX(c.payment_date), '%Y-%m-%d') as latest_date
+      FROM collections c
+    `;
+    
+    let incomeParams = [];
+    
+    // Add property join if needed
+    if (propertyId === 'vilankurichi-all') {
+      incomeQuery += 'LEFT JOIN properties p ON c.property_id = p.id AND p.name LIKE "%Vilankurichi%" ';
+    } else if (propertyId) {
+      incomeQuery += 'INNER JOIN properties p ON c.property_id = p.id ';
+    }
+    
+    // Add date filter
+    if (dateFilter) {
+      incomeQuery += dateFilter.replace('payment_date', 'c.payment_date') + ' ';
+    } else {
+      incomeQuery += 'WHERE 1=1 ';
+    }
+    
+    incomeQuery += 'AND c.status=\'paid\' ';
+    
+    // Add property filter
+    if (propertyId === 'vilankurichi-all') {
+      incomeQuery += 'AND p.name LIKE "%Vilankurichi%" ';
+    } else if (propertyId) {
+      incomeQuery += 'AND c.property_id = ? ';
+      incomeParams.push(propertyId);
+    }
+    
+    incomeQuery += 'GROUP BY c.category ORDER BY total DESC';
+    
+    const [incomeData] = await pool.query(incomeQuery, [...params, ...incomeParams]);
+    
+    // Get expense data
+    let expenseQuery = `
+      SELECT 
+        e.category,
+        SUM(e.amount) as total,
+        COUNT(*) as count,
+        DATE_FORMAT(MIN(e.expense_date), '%Y-%m-%d') as earliest_date,
+        DATE_FORMAT(MAX(e.expense_date), '%Y-%m-%d') as latest_date
+      FROM expenses e
+    `;
+    
+    let expenseParams = [];
+    
+    // Add property join if needed
+    if (propertyId === 'vilankurichi-all') {
+      expenseQuery += 'LEFT JOIN properties p ON e.property_id = p.id AND p.name LIKE "%Vilankurichi%" ';
+    } else if (propertyId) {
+      expenseQuery += 'INNER JOIN properties p ON e.property_id = p.id ';
+    }
+    
+    // Add date filter
+    if (dateFilter) {
+      expenseQuery += dateFilter.replace('payment_date', 'e.expense_date') + ' ';
+    } else {
+      expenseQuery += 'WHERE 1=1 ';
+    }
+    
+    expenseQuery += 'AND e.status=\'paid\' ';
+    
+    // Add property filter
+    if (propertyId === 'vilankurichi-all') {
+      expenseQuery += 'AND p.name LIKE "%Vilankurichi%" ';
+    } else if (propertyId) {
+      expenseQuery += 'AND e.property_id = ? ';
+      expenseParams.push(propertyId);
+    }
+    
+    expenseQuery += 'GROUP BY e.category ORDER BY total DESC';
+    
+    const [expenseData] = await pool.query(expenseQuery, [...params, ...expenseParams]);
+    
+    // Calculate totals
+    const totalIncome = incomeData.reduce((sum, item) => sum + parseFloat(item.total), 0);
+    const totalExpenses = expenseData.reduce((sum, item) => sum + parseFloat(item.total), 0);
+    const netProfit = totalIncome - totalExpenses;
+    const profitMargin = totalIncome > 0 ? ((netProfit / totalIncome) * 100).toFixed(2) : 0;
+    
+    // Get pending payments data
+    let pendingPaymentsQuery = `
+      SELECT 
+        SUM(CASE WHEN c.status='pending' THEN c.amount ELSE 0 END) as total_pending,
+        COUNT(CASE WHEN c.status='pending' THEN 1 ELSE NULL END) as pending_count
+      FROM collections c
+    `;
+    
+    let pendingPaymentsParams = [];
+    
+    // Add property join if needed
+    if (propertyId === 'vilankurichi-all') {
+      pendingPaymentsQuery += 'LEFT JOIN properties p ON c.property_id = p.id AND p.name LIKE "%Vilankurichi%" ';
+    } else if (propertyId) {
+      pendingPaymentsQuery += 'INNER JOIN properties p ON c.property_id = p.id ';
+    }
+    
+    // Add date filter
+    if (dateFilter) {
+      pendingPaymentsQuery += dateFilter.replace('payment_date', 'c.payment_date') + ' ';
+    } else {
+      pendingPaymentsQuery += 'WHERE 1=1 ';
+    }
+    
+    pendingPaymentsQuery += 'GROUP BY c.property_id';
+    
+    const [pendingPaymentsData] = await pool.query(pendingPaymentsQuery, [...params, ...pendingPaymentsParams]);
+    
+    // Get monthly trends
+    let trendsQuery = `
+      SELECT 
+        DATE_FORMAT(c.payment_date, '%b %Y') as month,
+        SUM(CASE WHEN c.status='paid' THEN c.amount ELSE 0 END) as income,
+        0 as expenses
+      FROM collections c
+    `;
+    
+    let trendsParams = [];
+    
+    // Add property join if needed
+    if (propertyId === 'vilankurichi-all') {
+      trendsQuery += 'LEFT JOIN properties p ON c.property_id = p.id AND p.name LIKE "%Vilankurichi%" ';
+    }
+    
+    // Add date filter
+    if (dateFilter) {
+      trendsQuery += dateFilter.replace('payment_date', 'c.payment_date') + ' ';
+    } else {
+      trendsQuery += 'WHERE 1=1 ';
+    }
+    
+    trendsQuery += 'AND c.status=\'paid\' ';
+    
+    // Add property filter
+    if (propertyId === 'vilankurichi-all') {
+      trendsQuery += 'AND p.name LIKE "%Vilankurichi%" ';
+    }
+    
+    trendsQuery += 'GROUP BY YEAR(c.payment_date), MONTH(c.payment_date), DATE_FORMAT(c.payment_date, \'%b %Y\') ';
+    
+    trendsQuery += `
+      UNION ALL
+      
+      SELECT 
+        DATE_FORMAT(e.expense_date, '%b %Y') as month,
+        0 as income,
+        SUM(e.amount) as expenses
+      FROM expenses e
+    `;
+    
+    // Add property join if needed
+    if (propertyId === 'vilankurichi-all') {
+      trendsQuery += 'LEFT JOIN properties p ON e.property_id = p.id AND p.name LIKE "%Vilankurichi%" ';
+    }
+    
+    // Add date filter for expenses
+    if (dateFilter) {
+      trendsQuery += dateFilter.replace('payment_date', 'e.expense_date') + ' ';
+    } else {
+      trendsQuery += 'WHERE 1=1 ';
+    }
+    
+    trendsQuery += 'AND e.status=\'paid\' ';
+    
+    // Add property filter for expenses
+    if (propertyId === 'vilankurichi-all') {
+      trendsQuery += 'AND p.name LIKE "%Vilankurichi%" ';
+    }
+    
+    trendsQuery += 'GROUP BY YEAR(e.expense_date), MONTH(e.expense_date), DATE_FORMAT(e.expense_date, \'%b %Y\') ORDER BY month';
+    
+    const [monthlyTrends] = await pool.query(trendsQuery, [...params, ...trendsParams]);
+    
+    // Generate report data
+    const totalPending = pendingPaymentsData.length > 0 ? parseFloat(pendingPaymentsData[0].total_pending) : 0;
+    const pendingCount = pendingPaymentsData.length > 0 ? parseInt(pendingPaymentsData[0].pending_count) : 0;
+    
+    // Get properties for occupancy calculation
+    const [properties] = await pool.query('SELECT id FROM properties');
+    const totalUnits = properties.length || 0;
+    
+    // Get active tenants to calculate occupied units
+    const [tenantsData] = await pool.query('SELECT property_id FROM tenants WHERE status = "active"');
+    const occupiedProperties = new Set(tenantsData.map(t => t.property_id));
+    const occupiedUnits = occupiedProperties.size || 0;
+    const vacantUnits = totalUnits - occupiedUnits;
+    const occupancyRate = totalUnits > 0 ? (occupiedUnits / totalUnits * 100).toFixed(2) : 0;
+    
+    const reportData = {
+      generated_at: new Date().toISOString(),
+      period: {
+        start_date: startDate || null,
+        end_date: endDate || null,
+        type: period
+      },
+      property_filter: propertyId || 'all',
+      summary: {
+        total_income: totalIncome,
+        total_expenses: totalExpenses,
+        net_profit: netProfit,
+        profit_margin: parseFloat(profitMargin),
+        total_pending: totalPending,
+        pending_count: pendingCount,
+        // Occupancy data
+        total_units: totalUnits,
+        occupied_units: occupiedUnits,
+        vacant_units: vacantUnits,
+        occupancy_rate: parseFloat(occupancyRate)
+      },
+      income_breakdown: incomeData,
+      expense_breakdown: expenseData,
+      monthly_trends: monthlyTrends,
+      pending_payments: pendingPaymentsData
+    };
+    
+    // Handle different export formats
+    if (format === 'pdf') {
+      // For PDF export, you would need a PDF library like puppeteer or jsPDF
+      res.setHeader('Content-Type', 'application/json');
+      res.json({ 
+        message: 'PDF export not yet implemented',
+        data: reportData 
+      });
+    } else if (format === 'excel') {
+      // For Excel export, you would need a library like exceljs
+      res.setHeader('Content-Type', 'application/json');
+      res.json({ 
+        message: 'Excel export not yet implemented',
+        data: reportData 
+      });
+    } else {
+      // JSON format (default)
+      res.json(reportData);
+    }
+    
+  } catch (err) {
+    console.error('[P&L REPORT] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── TENANTS ────────────────────────────────────────────────────────────────
@@ -1761,8 +2041,8 @@ app.post('/api/backup/restore', async (req, res) => {
     if (properties?.length) {
       for (const p of properties) {
         await connection.query(
-          'INSERT INTO properties (id,name,address,type,total_units,monthly_rent,status,created_at) VALUES (?,?,?,?,?,?,?,?)',
-          [p.id, p.name, p.address, p.type, p.total_units, p.monthly_rent, p.status, p.created_at]
+          'INSERT INTO properties (id,name,address,type,total_units,monthly_rent,status,created_at,eb_service_number,property_assessment_number,water_connection_number) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+          [p.id, p.name, p.address, p.type, p.total_units, p.monthly_rent, p.status, p.created_at, p.eb_service_number || null, p.property_assessment_number || null, p.water_connection_number || null]
         );
       }
     }
@@ -2026,14 +2306,20 @@ app.get('/api/predictions', async (req, res) => {
     const currentYear = now.getFullYear();
     
     // Get active tenants and their properties
-    const [activeTenants] = await pool.query(`
-      SELECT t.*, p.monthly_rent, p.name as property_name
-      FROM tenants t
-      JOIN properties p ON t.property_id = p.id
-      WHERE t.status = 'active'
-    `);
+    let activeTenants;
+    try {
+      [activeTenants] = await pool.query(`
+        SELECT t.*, p.monthly_rent, p.name as property_name
+        FROM tenants t
+        JOIN properties p ON t.property_id = p.id
+        WHERE t.status = 'active'
+      `);
+    } catch (dbError) {
+      console.error('Database error fetching active tenants:', dbError);
+      throw new Error('Failed to fetch active tenants from database');
+    }
     
-    // Get last 6 months of collection data for trend analysis
+    // Get last 6 months of collection data for trend analysis - only rent payments
     const [monthlyHistory] = await pool.query(`
       SELECT DATE_FORMAT(payment_date,'%Y-%m') as month,
              SUM(amount) as collected,
@@ -2041,6 +2327,7 @@ app.get('/api/predictions', async (req, res) => {
       FROM collections
       WHERE status = 'paid' 
         AND payment_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+        AND (category = 'rent' OR category IS NULL)
       GROUP BY DATE_FORMAT(payment_date,'%Y-%m')
       ORDER BY month DESC
     `);
@@ -2055,55 +2342,58 @@ app.get('/api/predictions', async (req, res) => {
         AND c.payment_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
     `);
     
-    // Calculate normalized monthly income accounting for partial months
-    // Group collections by month and identify partial payments
+    // Calculate actual monthly income - use real collected amounts only
     const monthDetails = {};
     for (const col of tenantCollections) {
       const paymentDate = new Date(col.payment_date);
       const month = paymentDate.toISOString().substring(0, 7); // YYYY-MM
       if (!monthDetails[month]) {
-        monthDetails[month] = { total: 0, fullMonths: 0, partialMonths: 0, expectedFull: 0 };
+        monthDetails[month] = { total: 0, count: 0 };
       }
       monthDetails[month].total += parseFloat(col.amount);
-      
-      // Check if this is a partial payment (less than 80% of monthly rent)
-      const rent = parseFloat(col.monthly_rent || 0);
-      const amount = parseFloat(col.amount);
-      if (rent > 0 && amount < rent * 0.8) {
-        monthDetails[month].partialMonths++;
-        // Add the difference to normalize to full month
-        monthDetails[month].expectedFull += rent;
-      } else {
-        monthDetails[month].fullMonths++;
-        monthDetails[month].expectedFull += amount;
-      }
+      monthDetails[month].count++;
     }
     
-    // Calculate projected income based on normalized full-month equivalents
-    let normalizedTotal = 0;
-    let normalizedCount = 0;
+    // Calculate actual average monthly income from collected data
+    let actualTotal = 0;
+    let actualCount = 0;
     for (const month of Object.keys(monthDetails)) {
-      const details = monthDetails[month];
-      // If month had partial payments, use normalized value
-      if (details.partialMonths > 0) {
-        normalizedTotal += details.expectedFull;
-      } else {
-        normalizedTotal += details.total;
-      }
-      normalizedCount++;
+      actualTotal += monthDetails[month].total;
+      actualCount++;
     }
     
-    const projectedMonthlyIncome = normalizedCount > 0 ? normalizedTotal / normalizedCount : 0;
-    
-    // Calculate potential income from active tenants (for comparison)
+    // Calculate potential income from active tenants
     const potentialMonthlyIncome = activeTenants.reduce((sum, t) => sum + parseFloat(t.monthly_rent || 0), 0);
     
-    // Collection rate compares projected income to potential income from active tenants
-    const collectionRate = potentialMonthlyIncome > 0 
-      ? Math.min((projectedMonthlyIncome / potentialMonthlyIncome) * 100, 100)
+    // Apply pro-rata logic for rent payment timing
+    // Rent is typically paid at beginning of month, so current month's income 
+    // comes from rent that was paid at start of current month
+    // For more accurate projection, use current month's actual collections
+    
+    // Get current month's actual collections
+    const currentMonthCollections = tenantCollections
+      .filter(col => {
+        const paymentDate = new Date(col.payment_date);
+        return paymentDate.getMonth() === currentMonth && 
+               paymentDate.getFullYear() === currentYear;
+      })
+      .reduce((sum, col) => sum + parseFloat(col.amount), 0);
+    
+    // Use hybrid approach: combine historical data with future projections
+    const actualAverageMonthlyIncome = actualCount > 0 ? actualTotal / actualCount : 0;
+    
+    // Initialize forecast array early to prevent access errors
+    const forecast = [];
+    
+    // Calculate hybrid projected monthly income for summary (will be updated after forecast is populated)
+    let hybridProjectedIncome = 0;
+    
+    // Real collection rate based on actual vs potential
+    const collectionRate = potentialMonthlyIncome > 0 && actualAverageMonthlyIncome > 0
+      ? Math.min((actualAverageMonthlyIncome / potentialMonthlyIncome) * 100, 90)
       : 0;
     
-    // Get expense history for trend
+    // Get expense history for trend - include maintenance, taxes, and utilities
     const [expenseHistory] = await pool.query(`
       SELECT DATE_FORMAT(expense_date,'%Y-%m') as month,
              SUM(amount) as total,
@@ -2111,40 +2401,100 @@ app.get('/api/predictions', async (req, res) => {
              COUNT(*) as count
       FROM expenses
       WHERE expense_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+        AND category IN ('maintenance', 'taxes', 'utilities')
       GROUP BY DATE_FORMAT(expense_date,'%Y-%m'), category
       ORDER BY month DESC
     `);
     
-    // Calculate 3-month forecast
+    // Calculate pro-rated rent for each active tenant based on start date
+    const calculateProRatedRent = (tenant, targetMonth, targetYear) => {
+      const startDate = new Date(tenant.start_date);
+      const targetDate = new Date(targetYear, targetMonth, 1);
+      
+            
+      // If tenant started before target month, they pay full rent
+      if (startDate <= targetDate) {
+        console.log(`Full rent: ${parseFloat(tenant.monthly_rent || 0)}`);
+        return parseFloat(tenant.monthly_rent || 0);
+      }
+      
+      // If tenant starts in the target month, calculate pro-rated amount
+      if (startDate.getMonth() === targetMonth && startDate.getFullYear() === targetYear) {
+        const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+        const daysOccupied = daysInMonth - startDate.getDate() + 1;
+        const proRatedAmount = parseFloat(tenant.monthly_rent || 0) * (daysOccupied / daysInMonth);
+        return proRatedAmount;
+      }
+      
+      // Tenant starts after target month, no rent
+      return 0;
+    };
+
+    // Calculate current financial year forecast (April to March)
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const forecast = [];
     
-    for (let i = 0; i < 3; i++) {
-      const forecastMonth = (currentMonth + i) % 12;
-      const forecastYear = currentYear + Math.floor((currentMonth + i) / 12);
+    // Validate required variables are available
+    if (!monthNames || !Array.isArray(monthNames)) {
+      throw new Error('monthNames array not properly initialized');
+    }
+    
+    // Determine financial year start and end
+    const financialYearStart = currentMonth >= 3 ? currentYear : currentYear - 1; // April start
+    const startMonth = 3; // April
+    
+    for (let i = 0; i < 12; i++) {
+      const forecastMonth = (startMonth + i) % 12;
+      const forecastYear = financialYearStart + Math.floor((startMonth + i) / 12);
+      
+      // Show complete financial year from April to March
+      // Don't filter by current date - show all months of the financial year
+      
       const monthKey = `${forecastYear}-${String(forecastMonth + 1).padStart(2, '0')}`;
       
-      // Find historical data for this month (same month last year if available)
-      const lastYearMonthKey = `${forecastYear - 1}-${String(forecastMonth + 1).padStart(2, '0')}`;
-      const historicalData = monthlyHistory.find(h => h.month === lastYearMonthKey);
-      const historicalExpenses = expenseHistory.filter(e => e.month === lastYearMonthKey);
+      // Use historical collections for past months, predict for future months
+      const monthlyCollections = monthlyHistory.find(h => h.month === monthKey);
+      let predictedIncome;
       
-      // Base prediction on historical data from last year or use current projected income
-      const predictedIncome = historicalData?.collected || projectedMonthlyIncome;
-      const predictedExpenses = historicalExpenses.reduce((sum, e) => sum + parseFloat(e.total), 0);
+      if (monthlyCollections) {
+        // Use actual collections for months that have historical data
+        predictedIncome = monthlyCollections.collected;
+      } else {
+        // Predict future months based on current active tenants
+        predictedIncome = activeTenants.reduce((sum, tenant) => {
+          return sum + calculateProRatedRent(tenant, forecastMonth, forecastYear);
+        }, 0);
+      }
       
-      // Apply collection rate confidence
-      const adjustedIncome = predictedIncome * (collectionRate / 100);
+      // Use historical expenses for past months, predict for future months
+      const monthlyExpenses = expenseHistory.filter(e => {
+        const expenseMonth = new Date(e.month + '-01').getMonth();
+        return expenseMonth === forecastMonth;
+      });
+      
+      let predictedExpenses;
+      if (monthlyExpenses.length > 0) {
+        // Use actual expenses for months that have historical data
+        predictedExpenses = monthlyExpenses.reduce((sum, e) => sum + parseFloat(e.total), 0);
+      } else {
+        // Predict future expenses based on monthly average
+        const monthlyAverage = expenseHistory.length > 0
+          ? expenseHistory.reduce((sum, e) => sum + parseFloat(e.total), 0) / expenseHistory.length
+          : 0;
+        predictedExpenses = monthlyAverage;
+      }
       
       forecast.push({
         month: monthNames[forecastMonth],
         year: forecastYear,
-        predictedIncome: Math.round(adjustedIncome),
-        predictedExpenses: Math.round(predictedExpenses * 1.05), // 5% buffer
-        predictedNet: Math.round(adjustedIncome - predictedExpenses * 1.05),
-        confidence: collectionRate > 80 ? 'high' : collectionRate > 50 ? 'medium' : 'low'
+        predictedIncome: Math.round(predictedIncome),
+        predictedExpenses: Math.round(predictedExpenses),
+        predictedNet: Math.round(predictedIncome - predictedExpenses),
+        confidence: predictedIncome > 0 ? 'high' : 'low'
       });
     }
+    
+    // Update hybrid projected income now that forecast is populated
+    hybridProjectedIncome = forecast.length > 0 ? forecast.reduce((sum, f) => sum + f.predictedIncome, 0) / forecast.length : 0;
     
     // Property-level predictions
     const [properties] = await pool.query(`
@@ -2171,13 +2521,13 @@ app.get('/api/predictions', async (req, res) => {
       };
     });
     
-    // Calculate year-end projections
-    const monthsRemaining = 12 - currentMonth;
+    // Calculate year-end projections using hybrid forecasting data
+    const forecastIncome = forecast.reduce((sum, f) => sum + f.predictedIncome, 0);
+    const forecastExpenses = forecast.reduce((sum, f) => sum + f.predictedExpenses, 0);
+    
     const yearEndProjections = {
-      projectedTotalIncome: Math.round(projectedMonthlyIncome * monthsRemaining * (collectionRate / 100)),
-      projectedTotalExpenses: Math.round(
-        expenseHistory.reduce((sum, e) => sum + parseFloat(e.total), 0) / (expenseHistory.length || 1) * monthsRemaining
-      ),
+      projectedTotalIncome: Math.round(forecastIncome),
+      projectedTotalExpenses: Math.round(forecastExpenses),
       projectedNetIncome: 0,
       currentYearActuals: {
         income: monthlyHistory.reduce((sum, m) => sum + parseFloat(m.collected), 0),
@@ -2189,7 +2539,7 @@ app.get('/api/predictions', async (req, res) => {
     yearEndProjections.projectedTotalExpenses += yearEndProjections.currentYearActuals.expenses;
     yearEndProjections.projectedNetIncome = yearEndProjections.projectedTotalIncome - yearEndProjections.projectedTotalExpenses;
     
-    // Risk indicators
+    // Risk indicators with safety checks
     const riskIndicators = {
       latePayments: await pool.query(`SELECT COUNT(*) as count FROM collections WHERE status IN ('pending', 'overdue') AND MONTH(payment_date) = MONTH(CURDATE())`),
       expiringLeases: await pool.query(`SELECT COUNT(*) as count FROM tenants WHERE status = 'active' AND end_date <= DATE_ADD(CURDATE(), INTERVAL 3 MONTH)`),
@@ -2202,22 +2552,41 @@ app.get('/api/predictions', async (req, res) => {
       `)
     };
     
+    // Safety checks for risk indicators
+    const safeRiskIndicators = {
+      latePayments: riskIndicators.latePayments && riskIndicators.latePayments[0] && riskIndicators.latePayments[0][0] ? riskIndicators.latePayments[0][0].count : 0,
+      expiringLeases: riskIndicators.expiringLeases && riskIndicators.expiringLeases[0] && riskIndicators.expiringLeases[0][0] ? riskIndicators.expiringLeases[0][0].count : 0,
+      highExpenseCategories: riskIndicators.highExpenseCategories && riskIndicators.highExpenseCategories[0] ? riskIndicators.highExpenseCategories[0] : null
+    };
+    
+    // Calculate occupancy data for summary
+    const [allProperties] = await pool.query('SELECT COUNT(*) as total FROM properties');
+    const totalProperties = allProperties[0].total;
+    const occupiedProperties = activeTenants.length;
+    const vacantProperties = totalProperties - occupiedProperties;
+    const occupancyRate = totalProperties > 0 ? (occupiedProperties / totalProperties * 100).toFixed(2) : 0;
+
     res.json({
       summary: {
         activeTenants: activeTenants.length,
-        projectedMonthlyIncome,
+        projectedMonthlyIncome: Math.round(hybridProjectedIncome),
         averageCollectionRate: Math.round(collectionRate * 10) / 10,
-        monthsOfHistory: monthlyHistory.length
+        monthsOfHistory: monthlyHistory.length,
+        // Occupancy data
+        total_units: totalProperties,
+        occupied_units: occupiedProperties,
+        vacant_units: vacantProperties,
+        occupancy_rate: parseFloat(occupancyRate)
       },
       forecast,
       propertyPredictions: propertyPredictions.sort((a, b) => b.projectedMonthlyIncome - a.projectedMonthlyIncome),
       yearEndProjections,
       risks: {
-        latePayments: riskIndicators.latePayments[0][0].count,
-        expiringLeases: riskIndicators.expiringLeases[0][0].count,
-        expenseAlerts: riskIndicators.highExpenseCategories[0]
+        latePayments: safeRiskIndicators.latePayments,
+        expiringLeases: safeRiskIndicators.expiringLeases,
+        expenseAlerts: safeRiskIndicators.highExpenseCategories
       },
-      recommendations: generateRecommendations(collectionRate, riskIndicators, propertyPredictions)
+      recommendations: generateRecommendations(collectionRate, safeRiskIndicators, propertyPredictions)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2235,19 +2604,19 @@ function generateRecommendations(collectionRate, risks, properties) {
     });
   }
   
-  if (risks.latePayments[0][0].count > 3) {
+  if (risks.latePayments > 3) {
     recommendations.push({
       type: 'action',
       priority: 'high',
-      message: `${risks.latePayments[0][0].count} late payments this month. Follow up immediately to maintain cash flow.`
+      message: `${risks.latePayments} late payments this month. Follow up immediately to maintain cash flow.`
     });
   }
   
-  if (risks.expiringLeases[0][0].count > 0) {
+  if (risks.expiringLeases > 0) {
     recommendations.push({
       type: 'info',
       priority: 'medium',
-      message: `${risks.expiringLeases[0][0].count} leases expiring in next 3 months. Start renewal discussions early.`
+      message: `${risks.expiringLeases} leases expiring in next 3 months. Start renewal discussions early.`
     });
   }
   
@@ -2359,8 +2728,8 @@ async function autoRecoverFromBackup() {
       if (properties?.length) {
         for (const p of properties) {
           await connection.query(
-            'INSERT INTO properties (id,name,address,type,total_units,monthly_rent,status,created_at) VALUES (?,?,?,?,?,?,?,?)',
-            [p.id, p.name, p.address, p.type, p.total_units, p.monthly_rent, p.status, toMySQLDateTime(p.created_at)]
+            'INSERT INTO properties (id,name,address,type,total_units,monthly_rent,status,created_at,eb_service_number,property_assessment_number,water_connection_number) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            [p.id, p.name, p.address, p.type, p.total_units, p.monthly_rent, p.status, toMySQLDateTime(p.created_at), p.eb_service_number || null, p.property_assessment_number || null, p.water_connection_number || null]
           );
         }
       }
