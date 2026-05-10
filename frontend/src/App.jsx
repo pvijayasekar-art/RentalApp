@@ -66,6 +66,7 @@ const Icon = ({ name, size = 20 }) => {
     warn: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
     home: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></svg>,
     file: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>,
+    image: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>,
   };
   return icons[name] || null;
 };
@@ -639,7 +640,7 @@ function Tenants() {
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
           <thead style={{background:"var(--bg)"}}>
             <tr style={{color:"var(--muted)",fontWeight:600,textTransform:"uppercase",fontSize:"11px",letterSpacing:"0.5px"}}>
-              {["ID","Tenant","Contact","Property/Unit","IDs","Tenancy Period","Deposit","Status",""].map((h,i) => (
+              {["ID","Tenant","Contact","Property/Unit","IDs","Tenancy Period","Tenure Remaining","Status",""].map((h,i) => (
                 <th key={i} style={{textAlign:"left",padding:"12px 16px",borderBottom:"1px solid var(--border)"}}>{h}</th>
               ))}
             </tr>
@@ -656,6 +657,7 @@ function Tenants() {
                 <td style={{padding:"12px 16px"}}>
                   <div style={{fontWeight:500,color:"var(--text)",fontSize:"12px"}}>{t.property_name||"—"}</div>
                   <div style={{fontSize:"11px",color:"var(--muted)"}}>Unit: {t.unit_number||"—"}</div>
+                  {t.monthly_rent && <div style={{fontSize:"11px",color:"var(--muted)"}}>Rent: ₹{t.monthly_rent}</div>}
                 </td>
                 <td style={{padding:"12px 16px",fontSize:"11px",color:"var(--muted)"}}>
                   <div>Aadhar: {t.aadhar_number||"—"}</div>
@@ -665,10 +667,26 @@ function Tenants() {
                   <div>{fmtDate(t.start_date)}</div>
                   <div>to {fmtDate(t.end_date)}</div>
                 </td>
-                <td style={{padding:"12px 16px",fontWeight:700,color:"var(--text)"}}>{fmt(t.security_deposit)}</td>
+                <td style={{padding:"12px 16px",fontSize:"12px",color:"var(--muted)"}}>
+                  {(() => {
+                    if (!t.start_date) return '—';
+                    const start = new Date(t.start_date);
+                    const end = t.end_date ? new Date(t.end_date) : new Date();
+                    const months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+                    const years = Math.floor(months / 12);
+                    const remainingMonths = months % 12;
+                    
+                    if (years > 0 && remainingMonths > 0) {
+                      return `${years}y ${remainingMonths}m`;
+                    } else if (years > 0) {
+                      return `${years}y`;
+                    } else {
+                      return `${remainingMonths}m`;
+                    }
+                  })()}
+                </td>
                 <td style={{padding:"12px 16px"}}>
-                  <Badge status={t.status}/>
-                  {t.tds_applicable && <span style={{display:"inline-block",marginLeft:"4px",padding:"2px 6px",background:"#f59e0b",color:"#fff",borderRadius:"4px",fontSize:"10px",fontWeight:600}}>TDS</span>}
+                  <Badge status={t.status}/>    
                 </td>
                 <td style={{padding:"12px 16px"}}>
                   <div style={{display:"flex",gap:"6px"}}>
@@ -1626,6 +1644,7 @@ function Ledger() {
   const [fyYear, setFyYear] = useState(getCurrentFinancialYear());
   const [calendarYear, setCalendarYear] = useState(getCurrentYear());
   const [filter, setFilter] = useState("all");
+  const [propertyFilter, setPropertyFilter] = useState("all");
   const [returnsFiling, setReturnsFiling] = useState(null);
   const blank = { entry_date:new Date().toISOString().slice(0,10),entry_type:"income",category:"rent",description:"",amount:"",gst_amount:"",tds_amount:"",net_amount:"",property_id:"",tenant_id:"",vendor:"",pan_number:"",gst_number:"",fy_year:getCurrentFinancialYear(),quarter:getCurrentQuarter(),notes:"" };
   const [form, setForm] = useState(blank);
@@ -1667,16 +1686,38 @@ function Ledger() {
   };
   
   const filtered = filter === "all" ? items : items.filter(i => i.entry_type === filter);
-  const filteredByYear = calendarYear === "all"
-    ? filtered
-    : filtered.filter(i => {
-        const dateStr = i.entry_date ? new Date(i.entry_date).toISOString().slice(0,4) : '';
-        return dateStr === calendarYear;
+  const filteredByProperty = propertyFilter === "all" ? filtered : 
+    propertyFilter === "vilankurichi-all" ? filtered.filter(i => {
+      // Filter for properties that contain "Vilankurichi" in their name
+      const property = properties.find(p => String(p.id) === String(i.property_id));
+      return property && property.name.toLowerCase().includes('vilankurichi');
+    }) :
+    filtered.filter(i => {
+      // Handle both string and number comparisons, and filter out null/undefined values
+      return i.property_id && String(i.property_id) === String(propertyFilter);
+    });
+  const filteredByYear = fyYear === "all"
+    ? filteredByProperty
+    : filteredByProperty.filter(i => {
+        return i.fy_year === fyYear;
       });
-  const totalIncome = filteredByYear.filter(i => i.entry_type === 'income').reduce((s, i) => s + parseFloat(i.amount||0), 0);
-  const totalExpense = filteredByYear.filter(i => i.entry_type === 'expense').reduce((s, i) => s + parseFloat(i.amount||0), 0);
+  
+  // Calculate totals from all data for the selected year (not filtered by entry type)
+  const allForYear = fyYear === "all" ? items : items.filter(i => i.fy_year === fyYear);
+  const allByYear = propertyFilter === "all" ? allForYear : 
+    propertyFilter === "vilankurichi-all" ? allForYear.filter(i => {
+      // Filter for properties that contain "Vilankurichi" in their name
+      const property = properties.find(p => String(p.id) === String(i.property_id));
+      return property && property.name.toLowerCase().includes('vilankurichi');
+    }) :
+    allForYear.filter(i => {
+      return i.property_id && String(i.property_id) === String(propertyFilter);
+    });
+  const totalIncome = allByYear.filter(i => i.entry_type === 'income').reduce((s, i) => s + parseFloat(i.amount||0), 0);
+  const totalExpense = allByYear.filter(i => i.entry_type === 'expense').reduce((s, i) => s + parseFloat(i.amount||0), 0);
+  const totalMargin = totalIncome - totalExpense;
   const totalGST = filteredByYear.reduce((s, i) => s + parseFloat(i.gst_amount||0), 0);
-  const totalTDS = filteredByYear.filter(i => i.entry_type === 'income').reduce((s, i) => s + parseFloat(i.tds_amount||0), 0);
+  const totalTDS = allByYear.filter(i => i.entry_type === 'income').reduce((s, i) => s + parseFloat(i.tds_amount||0), 0);
   
   const typeColors = { income: "#22c55e", expense: "#ef4444" };
   const quarters = ["Q1","Q2","Q3","Q4"];
@@ -1697,7 +1738,7 @@ function Ledger() {
           </button>
         </div>
       </div>
-      
+    
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"16px",marginBottom:"24px"}}>
         <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"12px",padding:"16px"}}>
           <div style={{fontSize:"12px",color:"var(--muted)"}}>Total Income</div>
@@ -1708,6 +1749,10 @@ function Ledger() {
           <div style={{fontSize:"20px",fontWeight:700,color:"#ef4444"}}>{fmt(totalExpense)}</div>
         </div>
       </div>
+      <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"12px",padding:"16px"}}>
+          <div style={{fontSize:"12px",color:"var(--muted)"}}>Margin</div>
+          <div style={{fontSize:"20px",fontWeight:700,color:"#2240c5"}}>{fmt(totalMargin)}</div>
+        </div>
       
       <div style={{display:"flex",gap:"8px",marginBottom:"16px",flexWrap:"wrap",alignItems:"center"}}>
         {["all","income","expense"].map(s => (
@@ -1715,21 +1760,39 @@ function Ledger() {
             {s === "all" ? "All Entries" : s}
           </button>
         ))}
-        <div style={{marginLeft:"auto",display:"flex",gap:"8px",alignItems:"center"}}>
-          <span style={{fontSize:"12px",color:"var(--muted)"}}>Calendar Year:</span>
-          <Select value={calendarYear} onChange={e => setCalendarYear(e.target.value)}>
-            <option value="all">All Years</option>
-            {calendarYears.map(y => <option key={y} value={y}>{y}</option>)}
+        <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
+          <span style={{fontSize:"12px",color:"var(--muted)"}}>Property:</span>
+          <Select value={propertyFilter} onChange={e => setPropertyFilter(e.target.value)}>
+            <option value="all">All Properties</option>
+            <option value="vilankurichi-all">All Vilankurichi Properties</option>
+            {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </Select>
         </div>
+        <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
+          <span style={{fontSize:"12px",color:"var(--muted)"}}>Financial Year:</span>
+          <Select value={fyYear} onChange={e => setFyYear(e.target.value)}>
+            <option value="all">All Years</option>
+            {fyYears.map(y => <option key={y} value={y}>{y}</option>)}
+          </Select>
+        </div>
+        <button 
+          onClick={() => {
+            setFilter("all");
+            setPropertyFilter("all");
+            setFyYear(getCurrentFinancialYear());
+          }}
+          style={{padding:"6px 14px",borderRadius:"20px",fontSize:"12px",fontWeight:600,cursor:"pointer",border:"1px solid var(--border)",background:"var(--card)",color:"var(--muted)"}}
+        >
+          Clear Filters
+        </button>
       </div>
       
       <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"16px",overflow:"hidden"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
           <thead style={{background:"var(--bg)"}}>
             <tr style={{color:"var(--muted)",fontWeight:600,textTransform:"uppercase",fontSize:"11px",letterSpacing:"0.5px"}}>
-              {["Date","Type","Category","Description","Amount","FY","Q",""].map((h,i) => (
-                <th key={i} style={{textAlign:i>=4?"right":"left",padding:"12px 16px",borderBottom:"1px solid var(--border)"}}>{h}</th>
+              {["Date","Type","Category","Description","Amount","FY","Q","Status"].map((h,i) => (
+                <th key={i} style={{textAlign:i>=4?"right":(i>=5?"center":"left"),padding:"12px 16px",borderBottom:"1px solid var(--border)"}}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -1747,13 +1810,21 @@ function Ledger() {
                     <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.description}</div>
                   </td>
                   <td style={{padding:"12px 16px",textAlign:"right",fontWeight:600,color}}>{fmt(l.amount)}</td>
-                  <td style={{padding:"12px 16px",fontSize:"11px",color:"var(--muted)"}}>{l.fy_year}</td>
-                  <td style={{padding:"12px 16px",fontSize:"11px",color:"var(--muted)"}}>{l.quarter}</td>
-                  <td style={{padding:"12px 16px"}}>
-                    <div style={{display:"flex",gap:"6px"}}>
-                      <button onClick={() => open(l)} style={{padding:"6px",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"6px",color:"var(--text)",cursor:"pointer"}}><Icon name="edit" size={13}/></button>
-                      <button onClick={() => del(l.id)} style={{padding:"6px",background:"#ef444411",border:"1px solid #ef444433",borderRadius:"6px",color:"#ef4444",cursor:"pointer"}}><Icon name="trash" size={13}/></button>
-                    </div>
+                  <td style={{padding:"12px 16px",fontSize:"11px",color:"var(--muted)",textAlign:"center"}}>{l.fy_year}</td>
+                  <td style={{padding:"12px 16px",fontSize:"11px",color:"var(--muted)",textAlign:"center"}}>{l.quarter}</td>
+                  <td style={{padding:"12px 16px",fontSize:"11px",textAlign:"center"}}>
+                    <span style={{
+                      display:"inline-block",
+                      padding:"2px 8px",
+                      borderRadius:"12px",
+                      fontSize:"10px",
+                      fontWeight:600,
+                      background:(l.status || "paid") === "paid" ? "#22c55e22" : "#ef444422",
+                      color:(l.status || "paid") === "paid" ? "#22c55e" : "#ef4444",
+                      textTransform:"capitalize"
+                    }}>
+                      {l.status || "paid"}
+                    </span>
                   </td>
                 </tr>
               );
@@ -2210,9 +2281,10 @@ function Receipts() {
   async function sendReceiptWhatsApp(receiptId) {
     try {
       const receipt = allReceipts.find(r => r.id === receiptId);
-      if (receipt && receipt.tenant_phone) {
+      const phoneNumber = getValidPhoneNumber(receipt);
+      if (receipt && phoneNumber) {
         const message = `Hello ${receipt.tenant_name}, your rent receipt ${receipt.receipt_number} for ${receipt.month_year} amounting to ₹${receipt.total_amount} has been generated. You can download it from the portal.`;
-        const whatsappUrl = `https://wa.me/${receipt.tenant_phone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
+        const whatsappUrl = `https://wa.me/${phoneNumber.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
         window.open(whatsappUrl, '_blank');
       } else {
         alert('Tenant phone number not available');
@@ -2228,19 +2300,14 @@ function Receipts() {
       const receiptText = `
 RENT PAYMENT RECEIPT
 ====================
-Receipt No: ${receipt.receipt_number}
-Date: ${receipt.receipt_date}
 
-Tenant: ${receipt.tenant_name}
+Receipt Number: ${receipt.receipt_number}
+Receipt Date: ${receipt.receipt_date}
+Tenant Name: ${receipt.tenant_name}
 Property: ${receipt.property_name}
-Address: ${receipt.property_address}
-
+Unit: ${receipt.unit_number || 'N/A'}
 Month/Year: ${receipt.month_year}
-Rent Amount: ₹${receipt.rent_amount}
-Maintenance: ₹${receipt.maintenance_amount}
-Utilities: ₹${receipt.utility_amount}
-TOTAL PAID: ₹${receipt.total_amount}
-
+Amount: ₹${receipt.total_amount}
 Payment Method: ${receipt.payment_method}
 Payment Date: ${receipt.payment_date}
 Reference: ${receipt.reference_number || 'N/A'}
@@ -2258,7 +2325,207 @@ Thank you for your payment!
       alert('Error downloading receipt: ' + err.message);
     }
   }
+
+  async function downloadReceiptAsImage(id) {
+    try {
+      const receipt = await api(`/receipts/${id}`);
+      
+      // Create a temporary div for the receipt template
+      const receiptDiv = document.createElement('div');
+      receiptDiv.style.cssText = `
+        position: fixed;
+        top: -9999px;
+        left: -9999px;
+        width: 400px;
+        padding: 40px;
+        background: white;
+        border: 2px solid #333;
+        font-family: 'Arial', sans-serif;
+        color: #333;
+        line-height: 1.4;
+      `;
+      
+      receiptDiv.innerHTML = `
+        <div style="text-align: center; margin-bottom: 30px;">
+          <h1 style="margin: 0; font-size: 24px; color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px;">
+            RENT PAYMENT RECEIPT
+          </h1>
+        </div>
+        
+        <div style="margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+            <span style="font-weight: bold; color: #555;">Receipt Number:</span>
+            <span style="font-family: monospace; background: #f8f9fa; padding: 2px 8px; border-radius: 4px;">${receipt.receipt_number}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+            <span style="font-weight: bold; color: #555;">Receipt Date:</span>
+            <span>${new Date(receipt.receipt_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+          </div>
+        </div>
+        
+        <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+          <h3 style="margin: 0 0 15px 0; color: #2c3e50; font-size: 16px;">Tenant Information</h3>
+          <div style="margin-bottom: 8px;">
+            <span style="font-weight: bold; color: #555;">Name:</span>
+            <span style="margin-left: 10px;">${receipt.tenant_name}</span>
+          </div>
+          <div style="margin-bottom: 8px;">
+            <span style="font-weight: bold; color: #555;">Property:</span>
+            <span style="margin-left: 10px;">${receipt.property_name}</span>
+          </div>
+          <div style="margin-bottom: 8px;">
+            <span style="font-weight: bold; color: #555;">Unit:</span>
+            <span style="margin-left: 10px;">${receipt.unit_number || 'N/A'}</span>
+          </div>
+        </div>
+        
+        <div style="background: #e8f5e8; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #27ae60;">
+          <h3 style="margin: 0 0 15px 0; color: #27ae60; font-size: 16px;">Payment Details</h3>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+            <span style="font-weight: bold; color: #555;">Month/Year:</span>
+            <span>${receipt.month_year}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+            <span style="font-weight: bold; color: #555;">Amount:</span>
+            <span style="font-size: 18px; font-weight: bold; color: #27ae60;">₹${parseFloat(receipt.total_amount).toLocaleString('en-IN')}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+            <span style="font-weight: bold; color: #555;">Payment Method:</span>
+            <span style="text-transform: capitalize;">${receipt.payment_method}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+            <span style="font-weight: bold; color: #555;">Payment Date:</span>
+            <span>${new Date(receipt.payment_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+            <span style="font-weight: bold; color: #555;">Payment Reference:</span>
+            <span style="font-family: monospace; background: #f8f9fa; padding: 2px 8px; border-radius: 4px;">${receipt.reference_number || 'N/A'}</span>
+          </div>
+        </div>
+        
+        <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
+          <p style="margin: 0; color: #7f8c8d; font-style: italic;">Thank you for your payment!</p>
+          <p style="margin: 5px 0 0; color: #95a5a6; font-size: 12px;">This is a computer-generated receipt</p>
+        </div>
+      `;
+      
+      document.body.appendChild(receiptDiv);
+      
+      // Use html2canvas if available, otherwise use a canvas-based approach
+      if (window.html2canvas) {
+        const canvas = await window.html2canvas(receiptDiv, {
+          scale: 2,
+          backgroundColor: '#ffffff'
+        });
+        document.body.removeChild(receiptDiv);
+        
+        canvas.toBlob((blob) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `Receipt-${receipt.receipt_number}.png`;
+          a.click();
+          URL.revokeObjectURL(url);
+        });
+      } else {
+        // Fallback: create a simple canvas representation
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 400;
+        canvas.height = 600;
+        
+        // White background
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Title
+        ctx.fillStyle = '#2c3e50';
+        ctx.font = 'bold 20px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('RENT PAYMENT RECEIPT', 200, 40);
+        
+        // Receipt details
+        ctx.font = '12px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#555';
+        let y = 80;
+        
+        ctx.fillText(`Receipt Number: ${receipt.receipt_number}`, 40, y);
+        y += 20;
+        ctx.fillText(`Receipt Date: ${new Date(receipt.receipt_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`, 40, y);
+        y += 30;
+        
+        ctx.font = 'bold 14px Arial';
+        ctx.fillText('Tenant Information', 40, y);
+        y += 20;
+        ctx.font = '12px Arial';
+        ctx.fillText(`Name: ${receipt.tenant_name}`, 40, y);
+        y += 20;
+        ctx.fillText(`Property: ${receipt.property_name}`, 40, y);
+        y += 20;
+        ctx.fillText(`Unit: ${receipt.unit_number || 'N/A'}`, 40, y);
+        y += 30;
+        
+        ctx.font = 'bold 14px Arial';
+        ctx.fillText('Payment Details', 40, y);
+        y += 20;
+        ctx.font = '12px Arial';
+        ctx.fillText(`Month/Year: ${receipt.month_year}`, 40, y);
+        y += 20;
+        ctx.font = 'bold 16px Arial';
+        ctx.fillStyle = '#27ae60';
+        ctx.fillText(`Amount: ₹${parseFloat(receipt.total_amount).toLocaleString('en-IN')}`, 40, y);
+        y += 20;
+        ctx.font = '12px Arial';
+        ctx.fillStyle = '#555';
+        ctx.fillText(`Payment Method: ${receipt.payment_method}`, 40, y);
+        y += 20;
+        ctx.fillText(`Payment Date: ${new Date(receipt.payment_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`, 40, y);
+        y += 20;
+        ctx.fillText(`Payment Reference: ${receipt.reference_number || 'N/A'}`, 40, y);
+        
+        // Thank you message
+        ctx.font = 'italic 12px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#7f8c8d';
+        ctx.fillText('Thank you for your payment!', 200, y + 60);
+        
+        document.body.removeChild(receiptDiv);
+        
+        canvas.toBlob((blob) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `Receipt-${receipt.receipt_number}.png`;
+          a.click();
+          URL.revokeObjectURL(url);
+        });
+      }
+    } catch (err) {
+      alert('Error downloading receipt image: ' + err.message);
+    }
+  }
   
+  // Helper function to validate mobile number format
+  const isValidMobileNumber = (phone) => {
+    if (!phone) return false;
+    // Remove all non-digit characters
+    const cleanPhone = phone.replace(/\D/g, '');
+    // More lenient validation - accept any phone number with at least 10 digits
+    return cleanPhone.length >= 10;
+  };
+
+  // Helper function to get valid phone number from tenant data
+  const getValidPhoneNumber = (tenant) => {
+    console.log('Tenant data for phone validation:', tenant);
+    // Check phone field first, then emergency_contact
+    const phoneToCheck = tenant.phone || tenant.emergency_contact || tenant.tenant_phone;
+    console.log('Phone to check:', phoneToCheck);
+    const isValid = isValidMobileNumber(phoneToCheck);
+    console.log('Is valid:', isValid);
+    return isValid ? phoneToCheck : null;
+  };
+
   const totalAmount = filteredReceipts.reduce((sum, r) => sum + (parseFloat(r.total_amount) || 0), 0);
   
   return (
@@ -2357,13 +2624,52 @@ Thank you for your payment!
                   </td>
                   <td style={{padding:"10px",textAlign:"center"}}>
                     <div style={{display:"flex",gap:"6px",justifyContent:"center"}}>
-                      <button onClick={() => downloadReceipt(r.id)} style={{padding:"6px 10px",background:"var(--info)",color:"#fff",border:"none",borderRadius:"6px",cursor:"pointer",fontSize:"0.75rem",fontWeight:500}} title="Download">
+                      <button onClick={() => downloadReceipt(r.id)} style={{padding:"6px 10px",background:"var(--info)",color:"#fff",border:"none",borderRadius:"6px",cursor:"pointer",fontSize:"0.75rem",fontWeight:500}} title="Download Text">
                         <Icon name="file" size={14}/>
                       </button>
-                      <button onClick={() => sendReceiptEmail(r.id)} style={{padding:"6px 10px",background:"var(--success)",color:"#fff",border:"none",borderRadius:"6px",cursor:"pointer",fontSize:"0.75rem",fontWeight:500}} title="Send Email">
+                      <button onClick={() => downloadReceiptAsImage(r.id)} style={{padding:"6px 10px",background:"#8b5cf6",color:"#fff",border:"none",borderRadius:"6px",cursor:"pointer",fontSize:"0.7rem",fontWeight:500}} title="Download Image">
+                        <Icon name="image" size={14}/>
+                      </button>
+                      <button 
+                        onClick={() => sendReceiptEmail(r.id)} 
+                        disabled={!r.tenant_email}
+                        style={{
+                          padding:"6px 10px",
+                          background: r.tenant_email ? "var(--success)" : "#94a3b8",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: "6px",
+                          cursor: r.tenant_email ? "pointer" : "not-allowed",
+                          fontSize: "0.75rem",
+                          fontWeight: 500,
+                          opacity: r.tenant_email ? 1 : 0.6
+                        }} 
+                        title={r.tenant_email ? "Send Email" : "Email not available - tenant email missing"}
+                      >
                         <Icon name="users" size={14}/>
                       </button>
-                      <button onClick={() => sendReceiptWhatsApp(r.id)} style={{padding:"6px 10px",background:"#25D366",color:"#fff",border:"none",borderRadius:"6px",cursor:"pointer",fontSize:"0.75rem",fontWeight:500}} title="Send WhatsApp">
+                      <button 
+                        onClick={() => sendReceiptWhatsApp(r.id)} 
+                        disabled={!getValidPhoneNumber(r)}
+                        style={{
+                          padding:"6px 10px",
+                          background: getValidPhoneNumber(r) ? "#25D366" : "#94a3b8",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: "6px",
+                          cursor: getValidPhoneNumber(r) ? "pointer" : "not-allowed",
+                          fontSize: "0.75rem",
+                          fontWeight: 500,
+                          opacity: getValidPhoneNumber(r) ? 1 : 0.6
+                        }} 
+                        title={
+                          getValidPhoneNumber(r) 
+                            ? "Send WhatsApp" 
+                            : (r.phone || r.emergency_contact)
+                              ? "WhatsApp not available - invalid mobile number format" 
+                              : "WhatsApp not available - tenant phone missing"
+                        }
+                      >
                         <Icon name="crystal" size={14}/>
                       </button>
                       <button onClick={() => deleteReceipt(r.id)} style={{padding:"6px 10px",background:"#ef4444",color:"#fff",border:"none",borderRadius:"6px",cursor:"pointer",fontSize:"0.75rem",fontWeight:500}} title="Delete">
@@ -2383,7 +2689,7 @@ Thank you for your payment!
 
 // ─── TAX FILING (Income Tax Calculator) ────────────────────────────────────
 function TaxFiling() {
-  const [calendarYear, setCalendarYear] = useState('2026');
+  const [financialYear, setFinancialYear] = useState(getCurrentFinancialYear);
   const [taxData, setTaxData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -2391,7 +2697,7 @@ function TaxFiling() {
   async function calculateTax() {
     setLoading(true);
     try {
-      const data = await api(`/tax/calculate-calendar-year/${calendarYear}`);
+      const data = await api(`/tax/calculate-financial-year/${financialYear}?municipalTaxes=0&deductions80C=0`);
       setTaxData(data);
     } catch (err) {
       console.error('Tax calculation error:', err);
@@ -2406,17 +2712,17 @@ function TaxFiling() {
     setSaving(true);
     try {
       await api('/tax/filing', 'POST', {
-        assessment_year: assessmentYear,
-        financial_year: financialYear,
+        assessment_year: taxData.assessment_year,
+        financial_year: taxData.financial_year,
         salary_income: 0,
-        house_property_income: taxData.summary.house_property_income,
-        municipal_taxes_paid: municipalTaxes,
-        standard_deduction: taxData.summary.total_standard_deduction,
-        taxable_income: taxData.summary.taxable_income,
+        house_property_income: taxData.income_details.gross_annual_value,
+        municipal_taxes_paid: taxData.income_details.property_tax_paid,
+        standard_deduction: taxData.income_details.standard_deduction,
+        taxable_income: taxData.income_details.taxable_income,
         tax_payable: taxData.tax_calculation.tax_payable,
-        cess_amount: taxData.tax_calculation.cess_4_percent,
+        cess_amount: taxData.tax_calculation.health_education_cess_4_percent,
         total_tax_liability: taxData.tax_calculation.total_tax_liability,
-        tds_credit: taxData.tax_calculation.tds_credit,
+        tds_credit: 0,
         tax_regime: 'new'
       });
       alert('Tax filing saved successfully!');
@@ -2430,159 +2736,94 @@ function TaxFiling() {
   return (
     <Card>
       <h2 style={{margin:"0 0 20px",fontSize:"1.5rem",color:"#1f2937",display:"flex",alignItems:"center",gap:"10px"}}>
-        <span style={{fontSize:"1.8rem"}}>🧮</span> Income Tax Calculator (ITR-2) - {calcMode === 'calendar' ? 'Calendar Year' : 'Financial Year'} Mode
+        <span style={{fontSize:"1.8rem"}}>🧮</span> Income Tax Calculator (ITR-2) - Financial Year Mode
       </h2>
       
-      {/* Mode Toggle */}
-      <div style={{display:"flex",gap:"10px",marginBottom:"20px"}}>
-        <button 
-          onClick={() => setCalcMode('financial')} 
-          style={{
-            padding:"10px 20px",
-            background: calcMode === 'financial' ? '#3b82f6' : '#e5e7eb',
-            color: calcMode === 'financial' ? '#fff' : '#374151',
-            border: 'none',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: 600
-          }}
-        >
-          Financial Year (FY)
-        </button>
-        <button 
-          onClick={() => setCalcMode('calendar')}
-          style={{
-            padding:"10px 20px",
-            background: calcMode === 'calendar' ? '#3b82f6' : '#e5e7eb',
-            color: calcMode === 'calendar' ? '#fff' : '#374151',
-            border: 'none',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: 600
-          }}
-        >
-          Calendar Year (CY)
-        </button>
-      </div>
       
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))",gap:"15px",marginBottom:"20px"}}>
-        {calcMode === 'financial' ? (
-          <>
-            <div>
-              <label style={{display:"block",marginBottom:"5px",fontWeight:"500"}}>Assessment Year</label>
-              <select value={assessmentYear} onChange={e => setAssessmentYear(e.target.value)} style={{width:"100%",padding:"10px",borderRadius:"8px",border:"1px solid #d1d5db"}}>
-                <option value="2027-28">2027-28 (FY 2026-27)</option>
-                <option value="2026-27">2026-27 (FY 2025-26)</option>
-                <option value="2025-26">2025-26 (FY 2024-25)</option>
-                <option value="2024-25">2024-25 (FY 2023-24)</option>
-              </select>
-            </div>
-            <div>
-              <label style={{display:"block",marginBottom:"5px",fontWeight:"500"}}>Financial Year</label>
-              <select value={financialYear} onChange={e => setFinancialYear(e.target.value)} style={{width:"100%",padding:"10px",borderRadius:"8px",border:"1px solid #d1d5db"}}>
-                <option value="2026-27">2026-27</option>
-                <option value="2025-26">2025-26</option>
-                <option value="2024-25">2024-25</option>
-                <option value="2023-24">2023-24</option>
-              </select>
-            </div>
-          </>
-        ) : (
-          <div>
-            <label style={{display:"block",marginBottom:"5px",fontWeight:"500"}}>Calendar Year</label>
-            <select value={calendarYear} onChange={e => setCalendarYear(e.target.value)} style={{width:"100%",padding:"10px",borderRadius:"8px",border:"1px solid #d1d5db"}}>
-              <option value="2026">2026 (FY 2026-27, AY 2027-28)</option>
-              <option value="2025">2025 (FY 2025-26, AY 2026-27)</option>
-              <option value="2024">2024 (FY 2024-25, AY 2025-26)</option>
-              <option value="2023">2023 (FY 2023-24, AY 2024-25)</option>
-            </select>
-          </div>
-        )}
-        {calcMode === 'financial' && (
-          <div>
-            <label style={{display:"block",marginBottom:"5px",fontWeight:"500"}}>Property Tax Paid (₹)</label>
-            <input type="number" value={municipalTaxes} onChange={e => setMunicipalTaxes(Number(e.target.value))} style={{width:"100%",padding:"10px",borderRadius:"8px",border:"1px solid #d1d5db"}} />
-          </div>
-        )}
+        <div>
+          <label style={{display:"block",marginBottom:"5px",fontWeight:"500"}}>Financial Year</label>
+          <select value={financialYear} onChange={e => setFinancialYear(e.target.value)} style={{width:"100%",padding:"10px",borderRadius:"8px",border:"1px solid #d1d5db"}}>
+            <option value="2026-27">2026-27</option>
+            <option value="2025-26">2025-26</option>
+            <option value="2024-25">2024-25</option>
+            <option value="2023-24">2023-24</option>
+          </select>
+        </div>
       </div>
       
-      <div style={{display:"flex",gap:"10px",marginBottom:"20px"}}>
+      <div style={{marginBottom:"20px"}}>
         <button onClick={calculateTax} disabled={loading} style={{padding:"12px 24px",background:loading?"#9ca3af":"#3b82f6",color:"#fff",border:"none",borderRadius:"8px",cursor:loading?"not-allowed":"pointer",fontWeight:"500"}}>
           {loading ? 'Calculating...' : 'Calculate Tax'}
         </button>
-        {taxData && (
-          <div style={{marginTop:"20px"}}>
-            <div style={{padding:"15px",background:"#f0f9ff",borderRadius:"8px",marginBottom:"20px",borderLeft:"4px solid #0ea5e9"}}>
-              <h3 style={{margin:"0 0 10px",color:"#0369a1"}}>
-                {calcMode === 'calendar' 
-                  ? `Tax Summary for Calendar Year ${taxData.calendar_year} (FY ${taxData.financial_year})`
-                  : `Tax Summary for AY ${taxData.assessment_year}`
-                }
-              </h3>
-              <p style={{margin:0,fontSize:"0.9rem",color:"#374151"}}>
-                {calcMode === 'calendar' ? (
-                  <><strong>Assessment Year:</strong> {taxData.assessment_year} | <strong>Regime:</strong> {taxData.tax_regime}</>
-                ) : (
-                  <><strong>Financial Year:</strong> {taxData.financial_year} | <strong>Regime:</strong> {taxData.tax_regime === 'new' ? 'New Tax Regime' : 'Old Tax Regime'}</>
-                )}
+      </div>
+      
+      {taxData && (
+        <div style={{marginTop:"20px"}}>
+          <div style={{padding:"15px",background:"#f0f9ff",borderRadius:"8px",marginBottom:"20px",borderLeft:"4px solid #0ea5e9"}}>
+            <h3 style={{margin:"0 0 10px",color:"#0369a1"}}>
+              Tax Summary for Financial Year {financialYear}
+            </h3>
+            <p style={{margin:0,fontSize:"0.9rem",color:"#374151"}}>
+              <><strong>Regime:</strong> {taxData.tax_regime}</>
+            </p>
+            {taxData.due_date && (
+              <p style={{margin:"5px 0 0",fontSize:"0.85rem",color:"#dc2626"}}>
+                <strong>ITR Filing Due Date:</strong> {taxData.due_date}
               </p>
-              {taxData.due_date && (
-                <p style={{margin:"5px 0 0",fontSize:"0.85rem",color:"#dc2626"}}>
-                  <strong>ITR Filing Due Date:</strong> {taxData.due_date}
-                </p>
-              )}
-            </div>
+            )}
+          </div>
             
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))",gap:"15px"}}>
-              <div style={{padding:"20px",background:"#f0f9ff",borderRadius:"12px",border:"2px solid #0ea5e9"}}>
-                <div style={{fontSize:"0.9rem",color:"#0369a1",marginBottom:"5px"}}>
-                  {calcMode === 'calendar' ? 'Gross Annual Value' : 'Gross Annual Value'}
+              <div style={{padding:"20px",background:"#e0f2fe",borderRadius:"12px",border:"2px solid #0284c7"}}>
+                <div style={{fontSize:"0.9rem",color:"#075985",marginBottom:"5px",fontWeight:"600"}}>
+                  Gross Annual Value
                 </div>
                 <div style={{fontSize:"1.5rem",fontWeight:"700",color:"#0c4a6e"}}>
                   ₹{(taxData.income_details?.gross_annual_value || 0).toLocaleString()}
                 </div>
               </div>
-              <div style={{padding:"20px",background:"#fef3c7",borderRadius:"12px",border:"2px solid #f59e0b"}}>
-                <div style={{fontSize:"0.9rem",color:"#92400e",marginBottom:"5px"}}>Property Tax</div>
+              <div style={{padding:"20px",background:"#fef9c3",borderRadius:"12px",border:"2px solid #f59e0b"}}>
+                <div style={{fontSize:"0.9rem",color:"#92400e",marginBottom:"5px",fontWeight:"600"}}>Property Tax</div>
                 <div style={{fontSize:"1.5rem",fontWeight:"700",color:"#78350f"}}>
                   ₹{(taxData.income_details?.property_tax_paid || 0).toLocaleString()}
                 </div>
               </div>
-              <div style={{padding:"20px",background:"#f0fdf4",borderRadius:"12px",border:"2px solid #22c55e"}}>
-                <div style={{fontSize:"0.9rem",color:"#166534",marginBottom:"5px"}}>
-                  {calcMode === 'calendar' ? 'Standard Deduction (₹50,000)' : 'Standard Deduction (30%)'}
+              <div style={{padding:"20px",background:"#dcfce7",borderRadius:"12px",border:"2px solid #16a34a"}}>
+                <div style={{fontSize:"0.9rem",color:"#15803d",marginBottom:"5px",fontWeight:"600"}}>
+                  Standard Deduction (₹50,000)
                 </div>
                 <div style={{fontSize:"1.5rem",fontWeight:"700",color:"#14532d"}}>
                   ₹{(taxData.income_details?.standard_deduction || 0).toLocaleString()}
                 </div>
               </div>
-              <div style={{padding:"20px",background:"#faf5ff",borderRadius:"12px",border:"2px solid #a855f7"}}>
-                <div style={{fontSize:"0.9rem",color:"#6b21a8",marginBottom:"5px"}}>Taxable Income</div>
+              <div style={{padding:"20px",background:"#f3e8ff",borderRadius:"12px",border:"2px solid #9333ea"}}>
+                <div style={{fontSize:"0.9rem",color:"#6b21a8",marginBottom:"5px",fontWeight:"600"}}>Taxable Income</div>
                 <div style={{fontSize:"1.5rem",fontWeight:"700",color:"#581c87"}}>
                   ₹{(taxData.income_details?.taxable_income || 0).toLocaleString()}
                 </div>
               </div>
             </div>
             
-            {calcMode === 'calendar' && taxData.tax_calculation?.slab_details && (
-              <div style={{padding:"20px",background:"#fff",borderRadius:"12px",border:"2px solid #e5e7eb",marginTop:"20px"}}>
-                <h4 style={{margin:"0 0 15px",color:"#1f2937"}}>Tax Slab Breakdown (New Regime FY 2026-27)</h4>
+            {taxData.tax_calculation?.slab_details && (
+              <div style={{padding:"20px",background:"#f9fafb",borderRadius:"12px",border:"2px solid #d1d5db",marginTop:"20px"}}>
+                <h4 style={{margin:"0 0 15px",color:"#111827",fontWeight:"600"}}>Tax Slab Breakdown (New Regime FY 2026-27)</h4>
                 <table style={{width:"100%",borderCollapse:"collapse",fontSize:"0.9rem"}}>
                   <thead>
-                    <tr style={{background:"#f3f4f6"}}>
-                      <th style={{padding:"10px",textAlign:"left"}}>Income Slab</th>
-                      <th style={{padding:"10px",textAlign:"center"}}>Rate</th>
-                      <th style={{padding:"10px",textAlign:"right"}}>Taxable Amount</th>
-                      <th style={{padding:"10px",textAlign:"right"}}>Tax</th>
+                    <tr style={{background:"#e5e7eb"}}>
+                      <th style={{padding:"10px",textAlign:"left",color:"#374151",fontWeight:"600"}}>Income Slab</th>
+                      <th style={{padding:"10px",textAlign:"center",color:"#374151",fontWeight:"600"}}>Rate</th>
+                      <th style={{padding:"10px",textAlign:"right",color:"#374151",fontWeight:"600"}}>Taxable Amount</th>
+                      <th style={{padding:"10px",textAlign:"right",color:"#374151",fontWeight:"600"}}>Tax</th>
                     </tr>
                   </thead>
                   <tbody>
                     {taxData.tax_calculation.slab_details.map((slab, idx) => (
-                      <tr key={idx} style={{borderBottom:"1px solid #e5e7eb"}}>
-                        <td style={{padding:"10px"}}>{slab.slab}</td>
-                        <td style={{padding:"10px",textAlign:"center"}}>{slab.rate}</td>
-                        <td style={{padding:"10px",textAlign:"right"}}>₹{Math.round(slab.amount).toLocaleString()}</td>
-                        <td style={{padding:"10px",textAlign:"right",fontWeight:"500"}}>₹{Math.round(slab.tax).toLocaleString()}</td>
+                      <tr key={idx} style={{borderBottom:"1px solid #d1d5db"}}>
+                        <td style={{padding:"10px",color:"#111827"}}>{slab.slab}</td>
+                        <td style={{padding:"10px",textAlign:"center",color:"#111827"}}>{slab.rate}</td>
+                        <td style={{padding:"10px",textAlign:"right",color:"#111827"}}>₹{Math.round(slab.amount).toLocaleString()}</td>
+                        <td style={{padding:"10px",textAlign:"right",fontWeight:"600",color:"#111827"}}>₹{Math.round(slab.tax).toLocaleString()}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2590,38 +2831,26 @@ function TaxFiling() {
               </div>
             )}
             
-            <div style={{padding:"20px",background:taxData.tax_calculation.total_tax_liability === 0 ? "#f0fdf4" : "#fef2f2",borderRadius:"12px",border:"2px solid " + (taxData.tax_calculation.total_tax_liability === 0 ? "#22c55e" : "#ef4444"),marginTop:"20px"}}>
-              <h3 style={{margin:"0 0 15px",color:taxData.tax_calculation.total_tax_liability === 0 ? "#166534" : "#991b1b"}}>
+            <div style={{padding:"20px",background:taxData.tax_calculation.total_tax_liability === 0 ? "#dcfce7" : "#fee2e2",borderRadius:"12px",border:"2px solid " + (taxData.tax_calculation.total_tax_liability === 0 ? "#16a34a" : "#dc2626"),marginTop:"20px"}}>
+              <h3 style={{margin:"0 0 15px",color:taxData.tax_calculation.total_tax_liability === 0 ? "#15803d" : "#991b1b",fontWeight:"600"}}>
                 {taxData.tax_calculation.total_tax_liability === 0 ? "No Tax Payable!" : "Tax Liability"}
               </h3>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))",gap:"15px"}}>
                 <div>
-                  <div style={{fontSize:"0.85rem",color:"#6b7280"}}>Base Tax</div>
-                  <div style={{fontSize:"1.2rem",fontWeight:"600"}}>₹{taxData.tax_calculation.base_tax?.toLocaleString()}</div>
-                </div>
-                {calcMode !== 'calendar' && (
-                  <div>
-                    <div style={{fontSize:"0.85rem",color:"#6b7280"}}>Rebate u/s 87A</div>
-                    <div style={{fontSize:"1.2rem",fontWeight:"600",color:"#22c55e"}}>₹{taxData.tax_calculation.rebate_87a?.toLocaleString()}</div>
-                  </div>
-                )}
-                <div>
-                  <div style={{fontSize:"0.85rem",color:"#6b7280"}}>Health & Education Cess (4%)</div>
-                  <div style={{fontSize:"1.2rem",fontWeight:"600"}}>₹{taxData.tax_calculation.cess_4_percent?.toLocaleString() || taxData.tax_calculation.health_education_cess_4_percent?.toLocaleString()}</div>
+                  <div style={{fontSize:"0.85rem",color:"#374151",fontWeight:"500"}}>Base Tax</div>
+                  <div style={{fontSize:"1.2rem",fontWeight:"600",color:"#111827"}}>₹{taxData.tax_calculation.base_tax?.toLocaleString()}</div>
                 </div>
                 <div>
-                  <div style={{fontSize:"0.85rem",color:"#6b7280"}}>Total Tax Liability</div>
-                  <div style={{fontSize:"1.2rem",fontWeight:"600",color:taxData.tax_calculation.total_tax_liability > 0 ? "#ef4444" : "#22c55e"}}>₹{taxData.tax_calculation.total_tax_liability?.toLocaleString()}</div>
+                  <div style={{fontSize:"0.85rem",color:"#374151",fontWeight:"500"}}>Health & Education Cess (4%)</div>
+                  <div style={{fontSize:"1.2rem",fontWeight:"600",color:"#111827"}}>₹{taxData.tax_calculation.cess_4_percent?.toLocaleString() || taxData.tax_calculation.health_education_cess_4_percent?.toLocaleString()}</div>
                 </div>
-                {calcMode !== 'calendar' && (
-                  <div>
-                    <div style={{fontSize:"0.85rem",color:"#6b7280"}}>TDS Credit</div>
-                    <div style={{fontSize:"1.2rem",fontWeight:"600"}}>₹{taxData.tax_calculation.tds_credit?.toLocaleString()}</div>
-                  </div>
-                )}
                 <div>
-                  <div style={{fontSize:"0.85rem",color:"#6b7280"}}>Tax Payable</div>
-                  <div style={{fontSize:"1.2rem",fontWeight:"600",color:taxData.tax_calculation.tax_payable > 0 ? "#ef4444" : "#22c55e"}}>
+                  <div style={{fontSize:"0.85rem",color:"#374151",fontWeight:"500"}}>Total Tax Liability</div>
+                  <div style={{fontSize:"1.2rem",fontWeight:"600",color:taxData.tax_calculation.total_tax_liability > 0 ? "#dc2626" : "#16a34a"}}>₹{taxData.tax_calculation.total_tax_liability?.toLocaleString()}</div>
+                </div>
+                <div>
+                  <div style={{fontSize:"0.85rem",color:"#374151",fontWeight:"500"}}>Tax Payable</div>
+                  <div style={{fontSize:"1.2rem",fontWeight:"600",color:taxData.tax_calculation.tax_payable > 0 ? "#dc2626" : "#16a34a"}}>
                     ₹{taxData.tax_calculation.tax_payable?.toLocaleString()}
                   </div>
                 </div>
@@ -2657,7 +2886,6 @@ function TaxFiling() {
             )}
           </div>
         )}
-      </div>
     </Card>
   );
 }
@@ -2672,9 +2900,9 @@ const PAGES = [
   { id:"collections", label:"Collections", icon:"rupee" },
   { id:"expenses", label:"Expenses", icon:"receipt" },
   { id:"receipts", label:"Receipts", icon:"receipt" },
-  { id:"predictions", label:"Predictions", icon:"chart" },
   { id:"taxfiling", label:"Tax Filing", icon:"calculator" },
   { id:"ledger", label:"Ledger", icon:"book" },
+  { id:"predictions", label:"Predictions", icon:"chart" },
 ];
 
 export default function App() {

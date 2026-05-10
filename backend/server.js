@@ -1038,10 +1038,13 @@ app.post('/api/tenants/:id/update-from-document', async (req, res) => {
 app.get('/api/ledger', async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT l.*, p.name as property_name, t.name as tenant_name
+      SELECT l.*, p.name as property_name, t.name as tenant_name,
+             COALESCE(c.status, e.status, 'paid') as status
       FROM ledger_entries l
       LEFT JOIN properties p ON l.property_id=p.id
       LEFT JOIN tenants t ON l.tenant_id=t.id
+      LEFT JOIN collections c ON l.reference_id=c.id AND l.reference_type='collection'
+      LEFT JOIN expenses e ON l.reference_id=e.id AND l.reference_type='expense'
       ORDER BY l.entry_date DESC, l.id DESC
     `);
     res.json(rows);
@@ -1225,6 +1228,140 @@ app.get('/api/ledger/returns-filing/:year', async (req, res) => {
 });
 
 // ─── INCOME TAX CALCULATION ─────────────────────────────────────────────────
+// Calculate income tax under new regime for financial year
+app.get('/api/tax/calculate-financial-year/:financialYear', async (req, res) => {
+  try {
+    const { financialYear } = req.params;
+    const { municipalTaxes = 0, deductions80C = 0 } = req.query;
+    
+    console.log(`[TAX-CALC] Calculating tax for financial year: ${financialYear}`);
+    
+    // Get Gross Annual Value from rent collections for the financial year (exclude deposits)
+    const [collectionsData] = await pool.query(
+      `SELECT 
+        COALESCE(SUM(amount), 0) as gross_annual_value,
+        COUNT(*) as collection_count
+       FROM collections 
+       WHERE payment_date >= ? 
+         AND payment_date <= ?
+         AND status = 'paid' 
+         AND category = 'rent'`,
+      [`${financialYear.split('-')[0]}-04-01`, `${parseInt(financialYear.split('-')[0]) + 1}-03-31`]
+    );
+    
+    console.log(`[TAX-CALC] Collections query result:`, collectionsData[0]);
+    
+    // Get property taxes from expenses for the financial year
+    const [expensesData] = await pool.query(
+      `SELECT 
+        COALESCE(SUM(amount), 0) as property_taxes,
+        COUNT(*) as expense_count
+       FROM expenses 
+       WHERE expense_date >= ? 
+         AND expense_date <= ? 
+         AND category = 'taxes'`,
+      [`${financialYear.split('-')[0]}-04-01`, `${parseInt(financialYear.split('-')[0]) + 1}-03-31`]
+    );
+    
+    console.log(`[TAX-CALC] Expenses query result:`, expensesData[0]);
+    
+    const grossAnnualValue = parseFloat(collectionsData[0]?.gross_annual_value || 0);
+    const propertyTaxPaid = parseFloat(expensesData[0]?.property_taxes || 0);
+    const deduction80C = parseFloat(deductions80C) || 0;
+    
+    // Standard deduction for new regime
+    const standardDeduction = 50000;
+    
+    // Calculate taxable income
+    const netRentalIncome = grossAnnualValue - propertyTaxPaid;
+    const taxableIncome = Math.max(0, netRentalIncome - standardDeduction);
+    
+    console.log(`[TAX-CALC] Final - GAV: ${grossAnnualValue}, Property Tax: ${propertyTaxPaid}, Net: ${netRentalIncome}, Taxable: ${taxableIncome}`);
+    
+    // New Tax Regime slabs for FY 2026-27 (AY 2027-28)
+    let tax = 0;
+    let slabDetails = [];
+    const remainingIncome = taxableIncome;
+    
+    if (remainingIncome <= 300000) {
+      slabDetails.push({ slab: "0 - 3,00,000", rate: "0%", amount: remainingIncome, tax: 0 });
+    } else {
+      slabDetails.push({ slab: "0 - 3,00,000", rate: "0%", amount: 300000, tax: 0 });
+    }
+    
+    if (remainingIncome > 300000) {
+      const slab2Amount = Math.min(300000, remainingIncome - 300000);
+      const slab2Tax = slab2Amount * 0.05;
+      tax += slab2Tax;
+      slabDetails.push({ slab: "3,00,001 - 6,00,000", rate: "5%", amount: slab2Amount, tax: slab2Tax });
+    }
+    
+    if (remainingIncome > 600000) {
+      const slab3Amount = Math.min(300000, remainingIncome - 600000);
+      const slab3Tax = slab3Amount * 0.10;
+      tax += slab3Tax;
+      slabDetails.push({ slab: "6,00,001 - 9,00,000", rate: "10%", amount: slab3Amount, tax: slab3Tax });
+    }
+    
+    if (remainingIncome > 900000) {
+      const slab4Amount = Math.min(300000, remainingIncome - 900000);
+      const slab4Tax = slab4Amount * 0.15;
+      tax += slab4Tax;
+      slabDetails.push({ slab: "9,00,001 - 12,00,000", rate: "15%", amount: slab4Amount, tax: slab4Tax });
+    }
+    
+    if (remainingIncome > 1200000) {
+      const slab5Amount = Math.min(300000, remainingIncome - 1200000);
+      const slab5Tax = slab5Amount * 0.20;
+      tax += slab5Tax;
+      slabDetails.push({ slab: "12,00,001 - 15,00,000", rate: "20%", amount: slab5Amount, tax: slab5Tax });
+    }
+    
+    if (remainingIncome > 1500000) {
+      const slab6Amount = remainingIncome - 1500000;
+      const slab6Tax = slab6Amount * 0.30;
+      tax += slab6Tax;
+      slabDetails.push({ slab: "Above 15,00,000", rate: "30%", amount: slab6Amount, tax: slab6Tax });
+    }
+    
+    // Health and Education Cess @ 4%
+    const cess = tax * 0.04;
+    const totalTaxLiability = tax + cess;
+    
+    // Total tax payable
+    const taxPayable = totalTaxLiability;
+    
+    // Calculate assessment year from financial year
+    const assessmentYear = `${parseInt(financialYear.split('-')[0]) + 1}-${(parseInt(financialYear.split('-')[0]) + 2).toString().slice(-2)}`;
+    
+    res.json({
+      financial_year: financialYear,
+      assessment_year: assessmentYear,
+      tax_regime: "New Regime",
+      income_details: {
+        gross_annual_value: grossAnnualValue,
+        property_tax_paid: propertyTaxPaid,
+        net_rental_income: netRentalIncome,
+        standard_deduction: standardDeduction,
+        deductions_80c: deduction80C,
+        taxable_income: taxableIncome
+      },
+      tax_calculation: {
+        slab_details: slabDetails,
+        base_tax: tax,
+        health_education_cess_4_percent: cess,
+        total_tax_liability: totalTaxLiability,
+        tax_payable: taxPayable
+      },
+      itr_form: "ITR-2",
+      due_date: `July 31, ${parseInt(financialYear.split('-')[0]) + 1}`
+    });
+  } catch (err) {
+    console.error('Tax calculation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Calculate income tax under new regime for calendar year
 app.get('/api/tax/calculate-calendar-year/:calendarYear', async (req, res) => {
   try {
@@ -1243,7 +1380,7 @@ app.get('/api/tax/calculate-calendar-year/:calendarYear', async (req, res) => {
        FROM collections 
        WHERE YEAR(payment_date) = ? 
          AND status = 'paid' 
-         AND (type = 'rent' OR type IS NULL OR type = '')`,
+         AND category = 'rent'`,
       [year]
     );
     
@@ -1988,10 +2125,11 @@ app.get('/api/predictions', async (req, res) => {
       const monthKey = `${forecastYear}-${String(forecastMonth + 1).padStart(2, '0')}`;
       
       // Find historical data for this month (same month last year if available)
-      const historicalData = monthlyHistory.find(h => h.month === monthKey);
-      const historicalExpenses = expenseHistory.filter(e => e.month === monthKey);
+      const lastYearMonthKey = `${forecastYear - 1}-${String(forecastMonth + 1).padStart(2, '0')}`;
+      const historicalData = monthlyHistory.find(h => h.month === lastYearMonthKey);
+      const historicalExpenses = expenseHistory.filter(e => e.month === lastYearMonthKey);
       
-      // Base prediction on historical or use current projected income
+      // Base prediction on historical data from last year or use current projected income
       const predictedIncome = historicalData?.collected || projectedMonthlyIncome;
       const predictedExpenses = historicalExpenses.reduce((sum, e) => sum + parseFloat(e.total), 0);
       
@@ -2570,7 +2708,8 @@ app.get('/api/tax/calculate/:assessmentYear', async (req, res) => {
   try {
     // Get all collections for the financial year
     const fyStart = `${financialYear.split('-')[0]}-04-01`;
-    const fyEnd = `20${financialYear.split('-')[1]}-03-31`;
+    const endYear = financialYear.split('-')[0];
+    const fyEnd = `${parseInt(endYear) + 1}-03-31`;
     
     const [collections] = await pool.query(`
       SELECT 
@@ -3005,6 +3144,8 @@ app.get('/api/receipts', async (req, res) => {
         r.tenant_id,
         r.property_id,
         t.name as tenant_name,
+        t.phone,
+        t.emergency_contact,
         p.name as property_name
       FROM receipts r
       JOIN tenants t ON r.tenant_id = t.id
