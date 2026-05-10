@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 
 const API = "/api";
 
@@ -37,7 +37,11 @@ async function api(path, method = "GET", body) {
   const opts = { method, headers: { "Content-Type": "application/json" } };
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(API + path, opts);
-  return r.json();
+  const data = await r.json();
+  if (!r.ok) {
+    throw new Error(data.error || data.message || `HTTP ${r.status}: ${r.statusText}`);
+  }
+  return data;
 }
 
 // ─── ICONS ──────────────────────────────────────────────────────────────────
@@ -48,6 +52,11 @@ const Icon = ({ name, size = 20 }) => {
     users: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
     rupee: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M6 3h12M6 8h12M15 21 9 8"/><path d="M9 13h3a4 4 0 0 0 0-5H9"/></svg>,
     expense: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
+    receipt: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+    chart: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/><path d="M21 21H3"/></svg>,
+    tax: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
+    calculator: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="16" y1="14" x2="16" y2="14"/><line x1="12" y1="14" x2="12" y2="14"/><line x1="8" y1="14" x2="8" y2="14"/><line x1="12" y1="18" x2="12" y2="18"/><line x1="16" y1="18" x2="16" y2="18"/><line x1="8" y1="18" x2="8" y2="18"/><line x1="16" y1="10" x2="16" y2="10.01"/><line x1="12" y1="10" x2="12" y2="10.01"/><line x1="8" y1="10" x2="8" y2="10.01"/></svg>,
+    book: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
     plus: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>,
     edit: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
     trash: <svg width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><polyline points="3,6 5,6 21,6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
@@ -60,6 +69,60 @@ const Icon = ({ name, size = 20 }) => {
   };
   return icons[name] || null;
 };
+
+// ─── CARD ─────────────────────────────────────────────────────────────────────
+function Card({ title, children, style = {} }) {
+  return (
+    <div style={{
+      background: "var(--gradient-card)",
+      border: "1px solid var(--border)",
+      borderRadius: "16px",
+      padding: "24px",
+      marginBottom: "24px",
+      boxShadow: "var(--shadow)",
+      position: "relative",
+      overflow: "hidden",
+      ...style
+    }}>
+      {/* Decorative corner accent */}
+      <div style={{
+        position: "absolute",
+        top: 0,
+        right: 0,
+        width: "120px",
+        height: "120px",
+        background: "radial-gradient(circle at top right, rgba(6,182,212,0.1) 0%, transparent 70%)",
+        pointerEvents: "none"
+      }} />
+      
+      {title && (
+        <div style={{ 
+          marginBottom: "20px", 
+          paddingBottom: "16px", 
+          borderBottom: "1px solid var(--border)",
+          position: "relative",
+          zIndex: 1
+        }}>
+          <h2 style={{ 
+            margin: 0, 
+            fontSize: "1.35rem", 
+            fontWeight: 600,
+            color: "var(--text)", 
+            display: "flex", 
+            alignItems: "center", 
+            gap: "10px",
+            letterSpacing: "-0.3px"
+          }}>
+            {title}
+          </h2>
+        </div>
+      )}
+      <div style={{ position: "relative", zIndex: 1 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 // ─── MODAL ──────────────────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
@@ -84,11 +147,12 @@ function Modal({ title, onClose, children }) {
 }
 
 // ─── FORM FIELD ─────────────────────────────────────────────────────────────
-function Field({ label, children }) {
+function Field({ label, children, error }) {
   return (
     <div style={{marginBottom:"16px"}}>
-      <label style={{display:"block",fontSize:"12px",fontWeight:600,color:"var(--muted)",marginBottom:"6px",textTransform:"uppercase",letterSpacing:"0.5px"}}>{label}</label>
+      <label style={{display:"block",fontSize:"12px",fontWeight:600,color:error?"#ef4444":"var(--muted)",marginBottom:"6px",textTransform:"uppercase",letterSpacing:"0.5px"}}>{label}</label>
       {children}
+      {error && <span style={{display:"block",fontSize:"11px",color:"#ef4444",marginTop:"4px"}}>{error}</span>}
     </div>
   );
 }
@@ -338,18 +402,47 @@ function Tenants() {
   const [extractedData, setExtractedData] = useState({ name: '', dateOfBirth: '', aadharNumber: '', panNumber: '', address: '', rawText: '', error: '' });
   const [extracting, setExtracting] = useState(false);
   const [search, setSearch] = useState("");
-  const blank = { name:"",email:"",phone:"",aadhar_number:"",pan_number:"",emergency_contact:"",property_id:"",unit_number:"",start_date:"",end_date:"",security_deposit:"",status:"active" };
+  const blank = { name:"",email:"",phone:"",aadhar_number:"",pan_number:"",emergency_contact:"",property_id:"",unit_number:"",start_date:"",end_date:"",security_deposit:"",monthly_rent:"",status:"active",tds_applicable:false,tds_rate:5.00,tds_section:"194-IB" };
   const [form, setForm] = useState(blank);
+  const [errors, setErrors] = useState({});
+
+  const validateForm = () => {
+    const newErrors = {};
+    if (!form.name?.trim()) newErrors.name = "Full Name is required";
+    if (!form.phone?.trim()) newErrors.phone = "Phone number is required";
+    else if (!/^[0-9]{10}$/.test(form.phone?.replace(/\s/g, ''))) newErrors.phone = "Enter valid 10-digit phone number";
+    if (!form.email?.trim()) newErrors.email = "Email is required";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) newErrors.email = "Enter valid email address";
+    if (!form.property_id) newErrors.property_id = "Property is required";
+    if (!form.unit_number?.trim()) newErrors.unit_number = "Unit Number is required";
+    
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const setField = (k, v) => {
+    setForm(f => {
+      const updated = { ...f, [k]: v };
+      // Auto-calculate TDS when monthly_rent changes
+      if (k === 'monthly_rent') {
+        const rent = parseFloat(v) || 0;
+        updated.tds_applicable = rent > 50000;
+        updated.tds_rate = rent > 50000 ? 5.00 : 0;
+      }
+      return updated;
+    });
+    if (errors[k]) setErrors(e => ({ ...e, [k]: null }));
+  };
   const load = useCallback(async () => {
     const [t, p] = await Promise.all([api("/tenants"), api("/properties")]);
     setItems(t); setProperties(p);
   }, []);
   useEffect(() => { load(); }, [load]);
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const set = (k, v) => setField(k, v);
   
   const pickProperty = (pid) => {
     const p = properties.find(p => p.id == pid);
-    set("property_id", pid);
+    setField("property_id", pid);
     // Auto-suggest first unit if available (in a real system, you'd fetch available units)
     if (p && !form.unit_number) {
       // Keep existing unit number if property changes, or clear if new property
@@ -360,10 +453,15 @@ function Tenants() {
   const open = (item) => { 
     if (item) setForm({ ...item, start_date: item.start_date?.slice(0,10)||"", end_date: item.end_date?.slice(0,10)||"" }); 
     else setForm(blank); 
+    setErrors({});
     setSelectedFile(null);
     setModal(item||true); 
   };
   const save = async () => {
+    if (!validateForm()) {
+      alert("Please fix the errors highlighted in the form");
+      return;
+    }
     try {
       let tenantId = modal?.id;
       if (modal?.id) {
@@ -568,7 +666,10 @@ function Tenants() {
                   <div>to {fmtDate(t.end_date)}</div>
                 </td>
                 <td style={{padding:"12px 16px",fontWeight:700,color:"var(--text)"}}>{fmt(t.security_deposit)}</td>
-                <td style={{padding:"12px 16px"}}><Badge status={t.status}/></td>
+                <td style={{padding:"12px 16px"}}>
+                  <Badge status={t.status}/>
+                  {t.tds_applicable && <span style={{display:"inline-block",marginLeft:"4px",padding:"2px 6px",background:"#f59e0b",color:"#fff",borderRadius:"4px",fontSize:"10px",fontWeight:600}}>TDS</span>}
+                </td>
                 <td style={{padding:"12px 16px"}}>
                   <div style={{display:"flex",gap:"6px"}}>
                     <button onClick={() => open(t)} style={{padding:"6px",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"6px",color:"var(--text)",cursor:"pointer"}}><Icon name="edit" size={13}/></button>
@@ -585,18 +686,31 @@ function Tenants() {
       {modal && (
         <Modal title={modal?.id ? "Edit Tenant" : "Add Tenant"} onClose={() => setModal(null)}>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 16px"}}>
-            <Field label="Full Name"><Input value={form.name} onChange={e => set("name",e.target.value)} placeholder="Rajesh Kumar"/></Field>
-            <Field label="Phone"><Input value={form.phone} onChange={e => set("phone",e.target.value)} placeholder="9876543210"/></Field>
-            <Field label="Email"><Input type="email" value={form.email} onChange={e => set("email",e.target.value)} placeholder="tenant@email.com"/></Field>
+            <Field label="Full Name *" error={errors.name}><Input value={form.name} onChange={e => set("name",e.target.value)} placeholder="Rajesh Kumar" style={errors.name ? {borderColor:"#ef4444"} : {}}/></Field>
+            <Field label="Phone *" error={errors.phone}><Input value={form.phone} onChange={e => set("phone",e.target.value)} placeholder="9876543210" style={errors.phone ? {borderColor:"#ef4444"} : {}}/></Field>
+            <Field label="Email *" error={errors.email}><Input type="email" value={form.email} onChange={e => set("email",e.target.value)} placeholder="tenant@email.com" style={errors.email ? {borderColor:"#ef4444"} : {}}/></Field>
             <Field label="Emergency Contact"><Input value={form.emergency_contact} onChange={e => set("emergency_contact",e.target.value)} placeholder="9876543211"/></Field>
             <Field label="Aadhar Number"><Input value={form.aadhar_number} onChange={e => set("aadhar_number",e.target.value)} placeholder="1234 5678 9012"/></Field>
             <Field label="PAN Number"><Input value={form.pan_number} onChange={e => set("pan_number",e.target.value)} placeholder="ABCDE1234F"/></Field>
-            <Field label="Property"><Select value={form.property_id} onChange={e => pickProperty(e.target.value)}><option value="">Select property…</option>{properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
-            <Field label="Unit Number"><Input value={form.unit_number} onChange={e => set("unit_number",e.target.value)} placeholder="A-101"/></Field>
+            <Field label="Property *" error={errors.property_id}><Select value={form.property_id} onChange={e => pickProperty(e.target.value)} style={errors.property_id ? {borderColor:"#ef4444"} : {}}><option value="">Select property…</option>{properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
+            <Field label="Unit Number *" error={errors.unit_number}><Input value={form.unit_number} onChange={e => set("unit_number",e.target.value)} placeholder="A-101" style={errors.unit_number ? {borderColor:"#ef4444"} : {}}/></Field>
             <Field label="Start Date"><Input type="date" value={form.start_date} onChange={e => set("start_date",e.target.value)}/></Field>
             <Field label="End Date"><Input type="date" value={form.end_date} onChange={e => set("end_date",e.target.value)}/></Field>
+            <Field label="Monthly Rent (₹)"><Input type="number" value={form.monthly_rent} onChange={e => set("monthly_rent",e.target.value)} placeholder="36000"/></Field>
             <Field label="Security Deposit (₹)"><Input type="number" value={form.security_deposit} onChange={e => set("security_deposit",e.target.value)} placeholder="36000"/></Field>
             <Field label="Status"><Select value={form.status} onChange={e => set("status",e.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option><option value="notice">Notice Period</option></Select></Field>
+            {form.tds_applicable && (
+              <div style={{gridColumn:"1/-1",padding:"12px",background:"#fef3c7",borderRadius:"8px",border:"1px solid #f59e0b",marginBottom:"12px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px",color:"#92400e",fontWeight:600}}>
+                  <span style={{fontSize:"18px"}}>⚠️</span>
+                  <span>TDS Applicable (Section 194-IB)</span>
+                </div>
+                <div style={{fontSize:"13px",color:"#92400e"}}>
+                  Monthly rent exceeds ₹50,000. TDS at {form.tds_rate}% = ₹{(form.monthly_rent * form.tds_rate / 100).toFixed(2)}/month
+                  <br/><small>Must deduct and deposit TDS to government monthly</small>
+                </div>
+              </div>
+            )}
             <div style={{gridColumn:"1/-1"}}><Field label="Upload Document (optional)">
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>
                 <Select value={docForm.document_type} onChange={e => setDocForm({...docForm, document_type: e.target.value})}>
@@ -857,6 +971,25 @@ function Collections() {
     setCollectionDocs(docs);
   };
   
+  // Generate receipt for collection
+  const generateReceipt = async (collection) => {
+    if (collection.receipt_id) {
+      alert('Receipt already exists for this collection');
+      return;
+    }
+    
+    try {
+      const res = await api('/receipts/generate', 'POST', {
+        collection_id: collection.id,
+        receipt_date: new Date().toISOString().slice(0,10)
+      });
+      alert(`Receipt generated: ${res.receipt.receipt_number}`);
+      load(); // Refresh to show receipt_id
+    } catch (err) {
+      alert('Failed to generate receipt: ' + err.message);
+    }
+  };
+  
   // Generic text extraction for copy-paste
   const extractContent = async (docId) => {
     setExtracting(true);
@@ -899,7 +1032,7 @@ function Collections() {
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
           <thead style={{background:"var(--bg)"}}>
             <tr style={{color:"var(--muted)",fontWeight:600,textTransform:"uppercase",fontSize:"11px",letterSpacing:"0.5px"}}>
-              {["Tenant","Property","Category","Month","Date","Method","Ref. No.","Amount","Status",""].map((h,i) => (
+              {["Tenant","Property","Category","Month","Date","Method","Ref. No.","Amount","Status","Receipt",""].map((h,i) => (
                 <th key={i} style={{textAlign:i===7?"right":"left",padding:"12px 16px",borderBottom:"1px solid var(--border)"}}>{h}</th>
               ))}
             </tr>
@@ -921,9 +1054,36 @@ function Collections() {
                   <td style={{padding:"12px 16px",textAlign:"right",fontWeight:700,color:"#22c55e",fontSize:"14px"}}>{fmt(c.amount)}</td>
                   <td style={{padding:"12px 16px"}}><Badge status={c.status}/></td>
                   <td style={{padding:"12px 16px"}}>
+                    {c.receipt_id ? (
+                      <span style={{display:"inline-flex",alignItems:"center",gap:"4px",padding:"4px 10px",borderRadius:"20px",fontSize:"11px",fontWeight:600,background:"#22c55e22",color:"#22c55e"}}>
+                        <Icon name="receipt" size={12}/> Generated
+                      </span>
+                    ) : (
+                      <span style={{display:"inline-flex",alignItems:"center",gap:"4px",padding:"4px 10px",borderRadius:"20px",fontSize:"11px",fontWeight:600,background:"#ef444422",color:"#ef4444"}}>
+                        <Icon name="warn" size={12}/> Not Generated
+                      </span>
+                    )}
+                  </td>
+                  <td style={{padding:"12px 16px"}}>
                     <div style={{display:"flex",gap:"6px"}}>
                       <button onClick={() => open(c)} style={{padding:"6px",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"6px",color:"var(--text)",cursor:"pointer"}}><Icon name="edit" size={13}/></button>
                       <button onClick={() => openUploadModal(c)} style={{padding:"6px",background:"#3b82f622",border:"1px solid #3b82f644",borderRadius:"6px",color:"#3b82f6",cursor:"pointer"}} title="Payment Proof"><Icon name="file" size={13}/></button>
+                      <button 
+                        onClick={() => generateReceipt(c)} 
+                        style={{
+                          padding:"6px", 
+                          background: c.receipt_id ? "#22c55e22" : "#f59e0b22", 
+                          border: c.receipt_id ? "1px solid #22c55e44" : "1px solid #f59e0b44", 
+                          borderRadius:"6px", 
+                          color: c.receipt_id ? "#22c55e" : "#f59e0b", 
+                          cursor: c.receipt_id ? "default" : "pointer",
+                          opacity: c.receipt_id ? 0.7 : 1
+                        }} 
+                        title={c.receipt_id ? "Receipt Generated" : "Generate Receipt"}
+                        disabled={c.receipt_id}
+                      >
+                        <Icon name="receipt" size={13}/>
+                      </button>
                       <button onClick={() => del(c.id)} style={{padding:"6px",background:"#ef444411",border:"1px solid #ef444433",borderRadius:"6px",color:"#ef4444",cursor:"pointer"}}><Icon name="trash" size={13}/></button>
                     </div>
                   </td>
@@ -1507,9 +1667,12 @@ function Ledger() {
   };
   
   const filtered = filter === "all" ? items : items.filter(i => i.entry_type === filter);
-  const filteredByYear = calendarYear === "all" 
-    ? filtered 
-    : filtered.filter(i => i.entry_date?.startsWith(calendarYear));
+  const filteredByYear = calendarYear === "all"
+    ? filtered
+    : filtered.filter(i => {
+        const dateStr = i.entry_date ? new Date(i.entry_date).toISOString().slice(0,4) : '';
+        return dateStr === calendarYear;
+      });
   const totalIncome = filteredByYear.filter(i => i.entry_type === 'income').reduce((s, i) => s + parseFloat(i.amount||0), 0);
   const totalExpense = filteredByYear.filter(i => i.entry_type === 'expense').reduce((s, i) => s + parseFloat(i.amount||0), 0);
   const totalGST = filteredByYear.reduce((s, i) => s + parseFloat(i.gst_amount||0), 0);
@@ -1526,18 +1689,16 @@ function Ledger() {
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"24px"}}>
         <div>
           <h1 style={{fontSize:"26px",fontWeight:800,color:"var(--text)",margin:0}}>General Ledger</h1>
-          <p style={{color:"var(--muted)",margin:"4px 0 0",fontSize:"14px"}}>Tax & Compliance Management</p>
+          <p style={{color:"var(--muted)",margin:"4px 0 0",fontSize:"14px"}}>Income & Expense Tracking</p>
         </div>
         <div style={{display:"flex",gap:"10px"}}>
-          <button onClick={loadReturnsFiling} style={{padding:"10px 20px",background:"var(--bg)",border:"1px solid var(--border)",color:"var(--text)",borderRadius:"10px",fontWeight:600,cursor:"pointer",fontSize:"14px"}}>Returns Filing</button>
-          <button onClick={() => setSummaryModal(true)} style={{padding:"10px 20px",background:"var(--bg)",border:"1px solid var(--border)",color:"var(--text)",borderRadius:"10px",fontWeight:600,cursor:"pointer",fontSize:"14px"}}>Tax Summary</button>
           <button onClick={() => open(null)} style={{display:"flex",alignItems:"center",gap:"8px",padding:"10px 20px",background:"var(--accent)",color:"#fff",border:"none",borderRadius:"10px",fontWeight:600,cursor:"pointer",fontSize:"14px"}}>
             <Icon name="plus" size={16}/>Add Entry
           </button>
         </div>
       </div>
       
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"16px",marginBottom:"24px"}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:"16px",marginBottom:"24px"}}>
         <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"12px",padding:"16px"}}>
           <div style={{fontSize:"12px",color:"var(--muted)"}}>Total Income</div>
           <div style={{fontSize:"20px",fontWeight:700,color:"#22c55e"}}>{fmt(totalIncome)}</div>
@@ -1545,14 +1706,6 @@ function Ledger() {
         <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"12px",padding:"16px"}}>
           <div style={{fontSize:"12px",color:"var(--muted)"}}>Total Expense</div>
           <div style={{fontSize:"20px",fontWeight:700,color:"#ef4444"}}>{fmt(totalExpense)}</div>
-        </div>
-        <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"12px",padding:"16px"}}>
-          <div style={{fontSize:"12px",color:"var(--muted)"}}>GST Collected</div>
-          <div style={{fontSize:"20px",fontWeight:700,color:"#3b82f6"}}>{fmt(totalGST)}</div>
-        </div>
-        <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"12px",padding:"16px"}}>
-          <div style={{fontSize:"12px",color:"var(--muted)"}}>TDS Deducted</div>
-          <div style={{fontSize:"20px",fontWeight:700,color:"#f59e0b"}}>{fmt(totalTDS)}</div>
         </div>
       </div>
       
@@ -1575,8 +1728,8 @@ function Ledger() {
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
           <thead style={{background:"var(--bg)"}}>
             <tr style={{color:"var(--muted)",fontWeight:600,textTransform:"uppercase",fontSize:"11px",letterSpacing:"0.5px"}}>
-              {["Date","Type","Category","Description","Amount","GST","TDS","Net","FY","Q",""].map((h,i) => (
-                <th key={i} style={{textAlign:i>=4&&i<=7?"right":"left",padding:"12px 16px",borderBottom:"1px solid var(--border)"}}>{h}</th>
+              {["Date","Type","Category","Description","Amount","FY","Q",""].map((h,i) => (
+                <th key={i} style={{textAlign:i>=4?"right":"left",padding:"12px 16px",borderBottom:"1px solid var(--border)"}}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -1594,9 +1747,6 @@ function Ledger() {
                     <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.description}</div>
                   </td>
                   <td style={{padding:"12px 16px",textAlign:"right",fontWeight:600,color}}>{fmt(l.amount)}</td>
-                  <td style={{padding:"12px 16px",textAlign:"right",color:"var(--muted)"}}>{fmt(l.gst_amount)}</td>
-                  <td style={{padding:"12px 16px",textAlign:"right",color:"var(--muted)"}}>{fmt(l.tds_amount)}</td>
-                  <td style={{padding:"12px 16px",textAlign:"right",fontWeight:600,color:"var(--text)"}}>{fmt(l.net_amount)}</td>
                   <td style={{padding:"12px 16px",fontSize:"11px",color:"var(--muted)"}}>{l.fy_year}</td>
                   <td style={{padding:"12px 16px",fontSize:"11px",color:"var(--muted)"}}>{l.quarter}</td>
                   <td style={{padding:"12px 16px"}}>
@@ -1785,6 +1935,734 @@ function Ledger() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// TDS REPORT (Section 194-IB)
+// ═══════════════════════════════════════════════════════════════════════════════
+function TDSReport() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(null);
+  const [tdsForm, setTdsForm] = useState({ month_year: '', rent_amount: '', tds_amount: '', tds_rate: 5.00, deposit_date: '', challan_number: '', notes: '' });
+  
+  const load = useCallback(async () => {
+    try {
+      const data = await api('/tds-report-detailed');
+      console.log('TDS Report data:', data);
+      if (data && data.tenant_wise_details) {
+        setItems(data.tenant_wise_details);
+      } else {
+        setItems([]);
+      }
+    } catch (err) {
+      console.error('Failed to load TDS report:', err);
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  
+  useEffect(() => { load(); }, [load]);
+  
+  const openTdsModal = (tenant) => {
+    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM format
+    const monthlyTds = (tenant.monthly_rent * (tenant.tds_rate || 5) / 100).toFixed(2);
+    setTdsForm({
+      month_year: currentMonth,
+      rent_amount: tenant.monthly_rent || '',
+      tds_amount: monthlyTds,
+      tds_rate: tenant.tds_rate || 5.00,
+      deposit_date: new Date().toISOString().slice(0, 10),
+      challan_number: '',
+      notes: ''
+    });
+    setModal(tenant);
+  };
+  
+  const saveTds = async () => {
+    if (!tdsForm.month_year || !tdsForm.tds_amount) {
+      alert('Please fill in month/year and TDS amount');
+      return;
+    }
+    try {
+      await api(`/tenants/${modal.id}/tds`, 'POST', tdsForm);
+      setModal(null);
+      load();
+      alert('TDS deposit recorded successfully');
+    } catch (err) {
+      alert('Failed to record TDS: ' + err.message);
+    }
+  };
+  
+  const totalPending = items.reduce((sum, i) => sum + parseFloat(i.pending_tds || 0), 0);
+  const totalDeposited = items.reduce((sum, i) => sum + parseFloat(i.deposited_tds || 0), 0);
+  const totalMonthlyTds = items.reduce((sum, i) => sum + (i.tds_applicable ? (i.monthly_rent * i.tds_rate / 100) : 0), 0);
+  
+  if (loading) return <div style={{padding:"40px",textAlign:"center",color:"var(--muted)"}}>Loading TDS report...</div>;
+  
+  return (
+    <Card title={<><Icon name="tax"/> TDS Report (Section 194-IB)</>}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:"16px",marginBottom:"24px"}}>
+        <div style={{padding:"16px",background:"var(--bg)",borderRadius:"8px",border:"1px solid var(--border)"}}>
+          <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>Tenants with TDS</div>
+          <div style={{fontSize:"24px",fontWeight:700,color:"var(--text)"}}>{items.length}</div>
+        </div>
+        <div style={{padding:"16px",background:"var(--bg)",borderRadius:"8px",border:"1px solid var(--border)"}}>
+          <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>Monthly TDS Liability</div>
+          <div style={{fontSize:"24px",fontWeight:700,color:"var(--warning)"}}>{fmt(totalMonthlyTds)}</div>
+        </div>
+        <div style={{padding:"16px",background:"var(--bg)",borderRadius:"8px",border:"1px solid var(--border)"}}>
+          <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>Total Deposited</div>
+          <div style={{fontSize:"24px",fontWeight:700,color:"var(--success)"}}>{fmt(totalDeposited)}</div>
+        </div>
+        <div style={{padding:"16px",background:"var(--bg)",borderRadius:"8px",border:"1px solid var(--border)"}}>
+          <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>Pending Deposits</div>
+          <div style={{fontSize:"24px",fontWeight:700,color:totalPending > 0 ? "#ef4444" : "var(--success)"}}>{fmt(totalPending)}</div>
+        </div>
+      </div>
+      
+      <div style={{fontSize:"13px",color:"var(--muted)",marginBottom:"16px",padding:"12px",background:"#fef3c7",borderRadius:"8px",border:"1px solid #f59e0b"}}>
+        <strong style={{color:"#92400e"}}>Section 194-IB:</strong> Individual/HUF paying rent exceeding ₹50,000/month must deduct TDS at 5% and deposit to government by 7th of next month.
+      </div>
+      
+      <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <thead>
+          <tr style={{borderBottom:"1px solid var(--border)"}}>
+            <th style={{textAlign:"left",padding:"12px",fontSize:"12px",fontWeight:600,color:"var(--muted)"}}>Tenant</th>
+            <th style={{textAlign:"left",padding:"12px",fontSize:"12px",fontWeight:600,color:"var(--muted)"}}>Property</th>
+            <th style={{textAlign:"right",padding:"12px",fontSize:"12px",fontWeight:600,color:"var(--muted)"}}>Monthly Rent</th>
+            <th style={{textAlign:"center",padding:"12px",fontSize:"12px",fontWeight:600,color:"var(--muted)"}}>TDS Rate</th>
+            <th style={{textAlign:"right",padding:"12px",fontSize:"12px",fontWeight:600,color:"var(--muted)"}}>Monthly TDS</th>
+            <th style={{textAlign:"right",padding:"12px",fontSize:"12px",fontWeight:600,color:"var(--muted)"}}>Deposited</th>
+            <th style={{textAlign:"right",padding:"12px",fontSize:"12px",fontWeight:600,color:"var(--muted)"}}>Pending</th>
+            <th style={{textAlign:"center",padding:"12px",fontSize:"12px",fontWeight:600,color:"var(--muted)"}}>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map(t => {
+            const monthlyTds = (t.monthly_rent * (t.tds_rate || 5) / 100);
+            return (
+              <tr key={t.tenant_id} style={{borderBottom:"1px solid var(--border)"}}>
+                <td style={{padding:"12px",fontWeight:500,color:"var(--text)"}}>{t.tenant_name}</td>
+                <td style={{padding:"12px",color:"var(--muted)",fontSize:"13px"}}>{t.property_name}</td>
+                <td style={{padding:"12px",textAlign:"right",fontWeight:500}}>{fmt(t.monthly_rent)}</td>
+                <td style={{padding:"12px",textAlign:"center",color:"var(--muted)"}}>{t.tds_rate}%</td>
+                <td style={{padding:"12px",textAlign:"right",color:"var(--warning)",fontWeight:600}}>{fmt(monthlyTds)}</td>
+                <td style={{padding:"12px",textAlign:"right",color:"var(--success)"}}>{fmt(t.deposited_tds || 0)}</td>
+                <td style={{padding:"12px",textAlign:"right",color:parseFloat(t.pending_tds||0)>0?"#ef4444":"var(--success)"}}>{fmt(t.pending_tds || 0)}</td>
+                <td style={{padding:"12px",textAlign:"center"}}>
+                  <button onClick={() => openTdsModal(t)} style={{padding:"6px 12px",background:"#3b82f6",color:"#fff",border:"none",borderRadius:"6px",fontSize:"12px",cursor:"pointer"}}>Record Deposit</button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      
+      {items.length === 0 && (
+        <div style={{padding:"40px",textAlign:"center",color:"var(--muted)"}}>
+          <p>No tenants with TDS applicable found.</p>
+          <p style={{fontSize:"13px",marginTop:"8px"}}>Tenants with monthly rent exceeding ₹50,000 will appear here.</p>
+        </div>
+      )}
+      
+      {modal && (
+        <Modal title={`Record TDS Deposit - ${modal.tenant_name}`} onClose={() => setModal(null)}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px"}}>
+            <Field label="Month/Year"><Input type="month" value={tdsForm.month_year} onChange={e => setTdsForm(f => ({ ...f, month_year: e.target.value }))}/></Field>
+            <Field label="Rent Amount (₹)"><Input type="number" value={tdsForm.rent_amount} onChange={e => setTdsForm(f => ({ ...f, rent_amount: e.target.value, tds_amount: (e.target.value * tdsForm.tds_rate / 100).toFixed(2) }))}/></Field>
+            <Field label="TDS Rate (%)"><Input type="number" step="0.01" value={tdsForm.tds_rate} onChange={e => setTdsForm(f => ({ ...f, tds_rate: e.target.value, tds_amount: (tdsForm.rent_amount * e.target.value / 100).toFixed(2) }))}/></Field>
+            <Field label="TDS Amount (₹)"><Input type="number" value={tdsForm.tds_amount} onChange={e => setTdsForm(f => ({ ...f, tds_amount: e.target.value }))}/></Field>
+            <Field label="Deposit Date"><Input type="date" value={tdsForm.deposit_date} onChange={e => setTdsForm(f => ({ ...f, deposit_date: e.target.value }))}/></Field>
+            <Field label="Challan Number"><Input value={tdsForm.challan_number} onChange={e => setTdsForm(f => ({ ...f, challan_number: e.target.value }))} placeholder="ITNS 281 Challan"/></Field>
+            <Field label="Notes" style={{gridColumn:"1/-1"}}><Input value={tdsForm.notes} onChange={e => setTdsForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any additional notes"/></Field>
+          </div>
+          <div style={{display:"flex",gap:"12px",justifyContent:"flex-end",marginTop:"20px"}}>
+            <button onClick={() => setModal(null)} style={{padding:"10px 20px",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"8px",color:"var(--text)",cursor:"pointer"}}>Cancel</button>
+            <button onClick={saveTds} style={{padding:"10px 20px",background:"#3b82f6",color:"#fff",border:"none",borderRadius:"8px",cursor:"pointer"}}>Record TDS Deposit</button>
+          </div>
+        </Modal>
+      )}
+    </Card>
+  );
+}
+
+// ─── RECEIPTS (Rent Payment Receipts) ──────────────────────────────────────────
+function Receipts() {
+  const [allReceipts, setAllReceipts] = useState([]);
+  const [filteredReceipts, setFilteredReceipts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedYear, setSelectedYear] = useState('');
+  const [filterTenantId, setFilterTenantId] = useState('');
+  const [filterPropertyId, setFilterPropertyId] = useState('');
+  const [tenants, setTenants] = useState([]);
+  const [properties, setProperties] = useState([]);
+  
+  useEffect(() => {
+    loadAllReceipts();
+    loadTenants();
+  }, []);
+  
+  useEffect(() => {
+    applyFilters();
+  }, [allReceipts, selectedYear, filterTenantId, filterPropertyId]);
+  
+  async function loadTenants() {
+    try {
+      const data = await api('/tenants');
+      setTenants(data || []);
+    } catch (err) {
+      console.error('Error loading tenants:', err);
+    }
+  }
+  
+  async function loadAllReceipts() {
+    setLoading(true);
+    try {
+      // Load all receipts without month filter
+      const [receiptsData, tenantsData, propertiesData] = await Promise.all([
+        api('/receipts?limit=1000'),
+        api('/tenants'),
+        api('/properties')
+      ]);
+      setAllReceipts(receiptsData || []);
+      setFilteredReceipts(receiptsData || []);
+      setTenants(tenantsData || []);
+      setProperties(propertiesData || []);
+    } catch (err) {
+      console.error('Error loading receipts:', err);
+      setAllReceipts([]);
+      setFilteredReceipts([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+  
+  // Get unique years from receipts
+  const availableYears = useMemo(() => {
+    const years = new Set();
+    allReceipts.forEach(r => {
+      if (r.receipt_date) {
+        years.add(new Date(r.receipt_date).getFullYear());
+      }
+      if (r.month_year) {
+        const match = r.month_year.match(/(\d{4})/);
+        if (match) years.add(parseInt(match[1]));
+      }
+    });
+    return Array.from(years).sort((a, b) => b - a);
+  }, [allReceipts]);
+  
+  function applyFilters() {
+    let filtered = [...allReceipts];
+    
+    // Filter by year
+    if (selectedYear) {
+      filtered = filtered.filter(r => {
+        if (r.receipt_date) {
+          return new Date(r.receipt_date).getFullYear().toString() === selectedYear;
+        }
+        if (r.month_year) {
+          return r.month_year.includes(selectedYear);
+        }
+        return false;
+      });
+    }
+    
+    // Filter by tenant
+    if (filterTenantId) {
+      filtered = filtered.filter(r => r.tenant_id?.toString() === filterTenantId);
+    }
+    
+    // Filter by property
+    if (filterPropertyId) {
+      filtered = filtered.filter(r => r.property_id?.toString() === filterPropertyId);
+    }
+    
+    setFilteredReceipts(filtered);
+  }
+  
+  function clearFilters() {
+    setSelectedYear('');
+    setFilterTenantId('');
+    setFilterPropertyId('');
+  }
+  
+  async function deleteReceipt(receiptId) {
+    if (!confirm('Are you sure you want to delete this receipt?')) return;
+    try {
+      await api(`/receipts/${receiptId}`, 'DELETE');
+      loadAllReceipts();
+      alert('Receipt deleted successfully');
+    } catch (err) {
+      alert('Error deleting receipt: ' + err.message);
+    }
+  }
+  
+  async function sendReceiptEmail(receiptId) {
+    try {
+      await api(`/receipts/${receiptId}/send-email`, 'POST');
+      alert('Receipt sent via email successfully');
+      loadAllReceipts();
+    } catch (err) {
+      alert('Error sending email: ' + err.message);
+    }
+  }
+  
+  async function sendReceiptWhatsApp(receiptId) {
+    try {
+      const receipt = allReceipts.find(r => r.id === receiptId);
+      if (receipt && receipt.tenant_phone) {
+        const message = `Hello ${receipt.tenant_name}, your rent receipt ${receipt.receipt_number} for ${receipt.month_year} amounting to ₹${receipt.total_amount} has been generated. You can download it from the portal.`;
+        const whatsappUrl = `https://wa.me/${receipt.tenant_phone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
+        window.open(whatsappUrl, '_blank');
+      } else {
+        alert('Tenant phone number not available');
+      }
+    } catch (err) {
+      alert('Error sending WhatsApp: ' + err.message);
+    }
+  }
+  
+  async function downloadReceipt(id) {
+    try {
+      const receipt = await api(`/receipts/${id}`);
+      const receiptText = `
+RENT PAYMENT RECEIPT
+====================
+Receipt No: ${receipt.receipt_number}
+Date: ${receipt.receipt_date}
+
+Tenant: ${receipt.tenant_name}
+Property: ${receipt.property_name}
+Address: ${receipt.property_address}
+
+Month/Year: ${receipt.month_year}
+Rent Amount: ₹${receipt.rent_amount}
+Maintenance: ₹${receipt.maintenance_amount}
+Utilities: ₹${receipt.utility_amount}
+TOTAL PAID: ₹${receipt.total_amount}
+
+Payment Method: ${receipt.payment_method}
+Payment Date: ${receipt.payment_date}
+Reference: ${receipt.reference_number || 'N/A'}
+
+Thank you for your payment!
+      `;
+      const blob = new Blob([receiptText], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Receipt-${receipt.receipt_number}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Error downloading receipt: ' + err.message);
+    }
+  }
+  
+  const totalAmount = filteredReceipts.reduce((sum, r) => sum + (parseFloat(r.total_amount) || 0), 0);
+  
+  return (
+    <Card>
+      <h2 style={{margin:"0 0 20px",fontSize:"1.5rem",color:"var(--text)",display:"flex",alignItems:"center",gap:"10px"}}>
+        <span style={{fontSize:"1.8rem"}}>📄</span> Rent Payment Receipts
+        <span style={{marginLeft:"auto",fontSize:"0.9rem",color:"var(--text-muted)",fontWeight:500}}>
+          Total: <strong style={{color:"var(--success)"}}>{filteredReceipts.length}</strong> receipts | <strong style={{color:"var(--success)"}}>₹{totalAmount.toLocaleString()}</strong>
+        </span>
+      </h2>
+      
+      {/* Filters from Receipts Table */}
+      <div style={{display:"flex",gap:"12px",marginBottom:"20px",padding:"16px",background:"var(--bg-secondary)",borderRadius:"12px",border:"1px solid var(--border)",flexWrap:"wrap",alignItems:"center"}}>
+        <span style={{fontSize:"0.9rem",fontWeight:600,color:"var(--text)",marginRight:"8px"}}>Filter by:</span>
+        
+        <select 
+          value={filterTenantId} 
+          onChange={e => setFilterTenantId(e.target.value)}
+          style={{padding:"8px 12px",borderRadius:"8px",border:"1px solid var(--border)",background:"var(--card)",color:"var(--text)",fontSize:"0.9rem",cursor:"pointer"}}
+        >
+          <option value="">All Tenants</option>
+          {tenants.map(t => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
+        
+        <select 
+          value={filterPropertyId} 
+          onChange={e => setFilterPropertyId(e.target.value)}
+          style={{padding:"8px 12px",borderRadius:"8px",border:"1px solid var(--border)",background:"var(--card)",color:"var(--text)",fontSize:"0.9rem",cursor:"pointer"}}
+        >
+          <option value="">All Properties</option>
+          {properties.map(p => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        
+        <select 
+          value={selectedYear} 
+          onChange={e => setSelectedYear(e.target.value)}
+          style={{padding:"8px 12px",borderRadius:"8px",border:"1px solid var(--border)",background:"var(--card)",color:"var(--text)",fontSize:"0.9rem",cursor:"pointer"}}
+        >
+          <option value="">All Years</option>
+          {availableYears.map(year => (
+            <option key={year} value={year}>{year}</option>
+          ))}
+        </select>
+        
+        {(filterTenantId || filterPropertyId || selectedYear) && (
+          <button 
+            onClick={clearFilters}
+            style={{padding:"8px 16px",background:"var(--card)",border:"1px solid var(--border)",borderRadius:"8px",color:"var(--text)",cursor:"pointer",fontSize:"0.85rem"}}
+          >
+            Clear Filters
+          </button>
+        )}
+      </div>
+      
+      {loading ? (
+        <p style={{textAlign:"center",padding:"40px",color:"var(--text-secondary)"}}>Loading receipts...</p>
+      ) : filteredReceipts.length === 0 ? (
+        <p style={{color:"var(--text-muted)",textAlign:"center",padding:"40px",fontSize:"1rem"}}>
+          {allReceipts.length === 0 
+            ? "No receipts generated yet. Select a month and click 'Generate Receipts' to create receipts from rent collections."
+            : "No receipts match the current filters. Try adjusting your search criteria."
+          }
+        </p>
+      ) : (
+        <div style={{overflowX:"auto",borderRadius:"12px",border:"1px solid var(--border)"}}>
+          <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,fontSize:"0.9rem",background:"var(--bg-secondary)"}}>
+            <thead>
+              <tr style={{background:"var(--card)"}}>
+                <th style={{padding:"14px 12px",textAlign:"left",borderBottom:"2px solid var(--border)",color:"var(--text)",fontWeight:600,fontSize:"0.85rem",textTransform:"uppercase",letterSpacing:"0.5px"}}>Receipt #</th>
+                <th style={{padding:"14px 12px",textAlign:"left",borderBottom:"2px solid var(--border)",color:"var(--text)",fontWeight:600,fontSize:"0.85rem",textTransform:"uppercase",letterSpacing:"0.5px"}}>Date</th>
+                <th style={{padding:"14px 12px",textAlign:"left",borderBottom:"2px solid var(--border)",color:"var(--text)",fontWeight:600,fontSize:"0.85rem",textTransform:"uppercase",letterSpacing:"0.5px"}}>Month/Year</th>
+                <th style={{padding:"14px 12px",textAlign:"left",borderBottom:"2px solid var(--border)",color:"var(--text)",fontWeight:600,fontSize:"0.85rem",textTransform:"uppercase",letterSpacing:"0.5px"}}>Tenant</th>
+                <th style={{padding:"14px 12px",textAlign:"left",borderBottom:"2px solid var(--border)",color:"var(--text)",fontWeight:600,fontSize:"0.85rem",textTransform:"uppercase",letterSpacing:"0.5px"}}>Property</th>
+                <th style={{padding:"14px 12px",textAlign:"right",borderBottom:"2px solid var(--border)",color:"var(--text)",fontWeight:600,fontSize:"0.85rem",textTransform:"uppercase",letterSpacing:"0.5px"}}>Amount</th>
+                <th style={{padding:"14px 12px",textAlign:"center",borderBottom:"2px solid var(--border)",color:"var(--text)",fontWeight:600,fontSize:"0.85rem",textTransform:"uppercase",letterSpacing:"0.5px"}}>Status</th>
+                <th style={{padding:"14px 12px",textAlign:"center",borderBottom:"2px solid var(--border)",color:"var(--text)",fontWeight:600,fontSize:"0.85rem",textTransform:"uppercase",letterSpacing:"0.5px"}}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredReceipts.map(r => (
+                <tr key={r.id} style={{borderBottom:"1px solid var(--border)",background:r.status==='generated'?"var(--bg-secondary)":r.status==='sent'?"rgba(59, 130, 246, 0.1)":"rgba(16, 185, 129, 0.1)",transition:"all 0.15s ease"}}>
+                  <td style={{padding:"12px",fontFamily:"monospace",fontSize:"0.85rem",color:"var(--accent)",fontWeight:600}}>{r.receipt_number}</td>
+                  <td style={{padding:"12px",fontSize:"0.9rem",color:"var(--text-secondary)"}}>{r.receipt_date ? new Date(r.receipt_date).toLocaleDateString('en-GB') : '-'}</td>
+                  <td style={{padding:"12px",fontSize:"0.9rem",color:"var(--text)"}}>{r.month_year}</td>
+                  <td style={{padding:"12px",color:"var(--text)",fontWeight:500}}>{r.tenant_name}</td>
+                  <td style={{padding:"12px",fontSize:"0.9rem",color:"var(--text-secondary)"}}>{r.property_name}</td>
+                  <td style={{padding:"12px",textAlign:"right",fontWeight:600,color:"var(--success)",fontSize:"0.95rem"}}>₹{parseFloat(r.total_amount)?.toLocaleString()}</td>
+                  <td style={{padding:"12px",textAlign:"center"}}>
+                    <span style={{padding:"6px 12px",borderRadius:"20px",fontSize:"0.75rem",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.3px",background:r.status==='generated'?"var(--warning-bg)":r.status==='sent'?"var(--info-bg)":"var(--success-bg)",color:r.status==='generated'?"var(--warning)":r.status==='sent'?"var(--info)":"var(--success)",border:`1px solid ${r.status==='generated'?'rgba(245, 158, 11, 0.3)':r.status==='sent'?'rgba(59, 130, 246, 0.3)':'rgba(16, 185, 129, 0.3)'}`}}>
+                      {r.status}
+                    </span>
+                  </td>
+                  <td style={{padding:"10px",textAlign:"center"}}>
+                    <div style={{display:"flex",gap:"6px",justifyContent:"center"}}>
+                      <button onClick={() => downloadReceipt(r.id)} style={{padding:"6px 10px",background:"var(--info)",color:"#fff",border:"none",borderRadius:"6px",cursor:"pointer",fontSize:"0.75rem",fontWeight:500}} title="Download">
+                        <Icon name="file" size={14}/>
+                      </button>
+                      <button onClick={() => sendReceiptEmail(r.id)} style={{padding:"6px 10px",background:"var(--success)",color:"#fff",border:"none",borderRadius:"6px",cursor:"pointer",fontSize:"0.75rem",fontWeight:500}} title="Send Email">
+                        <Icon name="users" size={14}/>
+                      </button>
+                      <button onClick={() => sendReceiptWhatsApp(r.id)} style={{padding:"6px 10px",background:"#25D366",color:"#fff",border:"none",borderRadius:"6px",cursor:"pointer",fontSize:"0.75rem",fontWeight:500}} title="Send WhatsApp">
+                        <Icon name="crystal" size={14}/>
+                      </button>
+                      <button onClick={() => deleteReceipt(r.id)} style={{padding:"6px 10px",background:"#ef4444",color:"#fff",border:"none",borderRadius:"6px",cursor:"pointer",fontSize:"0.75rem",fontWeight:500}} title="Delete">
+                        <Icon name="trash" size={14}/>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ─── TAX FILING (Income Tax Calculator) ────────────────────────────────────
+function TaxFiling() {
+  const [calendarYear, setCalendarYear] = useState('2026');
+  const [taxData, setTaxData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  
+  async function calculateTax() {
+    setLoading(true);
+    try {
+      const data = await api(`/tax/calculate-calendar-year/${calendarYear}`);
+      setTaxData(data);
+    } catch (err) {
+      console.error('Tax calculation error:', err);
+      alert('Error calculating tax: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  
+  async function saveFiling() {
+    if (!taxData) return;
+    setSaving(true);
+    try {
+      await api('/tax/filing', 'POST', {
+        assessment_year: assessmentYear,
+        financial_year: financialYear,
+        salary_income: 0,
+        house_property_income: taxData.summary.house_property_income,
+        municipal_taxes_paid: municipalTaxes,
+        standard_deduction: taxData.summary.total_standard_deduction,
+        taxable_income: taxData.summary.taxable_income,
+        tax_payable: taxData.tax_calculation.tax_payable,
+        cess_amount: taxData.tax_calculation.cess_4_percent,
+        total_tax_liability: taxData.tax_calculation.total_tax_liability,
+        tds_credit: taxData.tax_calculation.tds_credit,
+        tax_regime: 'new'
+      });
+      alert('Tax filing saved successfully!');
+    } catch (err) {
+      alert('Error saving filing: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  
+  return (
+    <Card>
+      <h2 style={{margin:"0 0 20px",fontSize:"1.5rem",color:"#1f2937",display:"flex",alignItems:"center",gap:"10px"}}>
+        <span style={{fontSize:"1.8rem"}}>🧮</span> Income Tax Calculator (ITR-2) - {calcMode === 'calendar' ? 'Calendar Year' : 'Financial Year'} Mode
+      </h2>
+      
+      {/* Mode Toggle */}
+      <div style={{display:"flex",gap:"10px",marginBottom:"20px"}}>
+        <button 
+          onClick={() => setCalcMode('financial')} 
+          style={{
+            padding:"10px 20px",
+            background: calcMode === 'financial' ? '#3b82f6' : '#e5e7eb',
+            color: calcMode === 'financial' ? '#fff' : '#374151',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: 600
+          }}
+        >
+          Financial Year (FY)
+        </button>
+        <button 
+          onClick={() => setCalcMode('calendar')}
+          style={{
+            padding:"10px 20px",
+            background: calcMode === 'calendar' ? '#3b82f6' : '#e5e7eb',
+            color: calcMode === 'calendar' ? '#fff' : '#374151',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: 600
+          }}
+        >
+          Calendar Year (CY)
+        </button>
+      </div>
+      
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))",gap:"15px",marginBottom:"20px"}}>
+        {calcMode === 'financial' ? (
+          <>
+            <div>
+              <label style={{display:"block",marginBottom:"5px",fontWeight:"500"}}>Assessment Year</label>
+              <select value={assessmentYear} onChange={e => setAssessmentYear(e.target.value)} style={{width:"100%",padding:"10px",borderRadius:"8px",border:"1px solid #d1d5db"}}>
+                <option value="2027-28">2027-28 (FY 2026-27)</option>
+                <option value="2026-27">2026-27 (FY 2025-26)</option>
+                <option value="2025-26">2025-26 (FY 2024-25)</option>
+                <option value="2024-25">2024-25 (FY 2023-24)</option>
+              </select>
+            </div>
+            <div>
+              <label style={{display:"block",marginBottom:"5px",fontWeight:"500"}}>Financial Year</label>
+              <select value={financialYear} onChange={e => setFinancialYear(e.target.value)} style={{width:"100%",padding:"10px",borderRadius:"8px",border:"1px solid #d1d5db"}}>
+                <option value="2026-27">2026-27</option>
+                <option value="2025-26">2025-26</option>
+                <option value="2024-25">2024-25</option>
+                <option value="2023-24">2023-24</option>
+              </select>
+            </div>
+          </>
+        ) : (
+          <div>
+            <label style={{display:"block",marginBottom:"5px",fontWeight:"500"}}>Calendar Year</label>
+            <select value={calendarYear} onChange={e => setCalendarYear(e.target.value)} style={{width:"100%",padding:"10px",borderRadius:"8px",border:"1px solid #d1d5db"}}>
+              <option value="2026">2026 (FY 2026-27, AY 2027-28)</option>
+              <option value="2025">2025 (FY 2025-26, AY 2026-27)</option>
+              <option value="2024">2024 (FY 2024-25, AY 2025-26)</option>
+              <option value="2023">2023 (FY 2023-24, AY 2024-25)</option>
+            </select>
+          </div>
+        )}
+        {calcMode === 'financial' && (
+          <div>
+            <label style={{display:"block",marginBottom:"5px",fontWeight:"500"}}>Property Tax Paid (₹)</label>
+            <input type="number" value={municipalTaxes} onChange={e => setMunicipalTaxes(Number(e.target.value))} style={{width:"100%",padding:"10px",borderRadius:"8px",border:"1px solid #d1d5db"}} />
+          </div>
+        )}
+      </div>
+      
+      <div style={{display:"flex",gap:"10px",marginBottom:"20px"}}>
+        <button onClick={calculateTax} disabled={loading} style={{padding:"12px 24px",background:loading?"#9ca3af":"#3b82f6",color:"#fff",border:"none",borderRadius:"8px",cursor:loading?"not-allowed":"pointer",fontWeight:"500"}}>
+          {loading ? 'Calculating...' : 'Calculate Tax'}
+        </button>
+        {taxData && (
+          <div style={{marginTop:"20px"}}>
+            <div style={{padding:"15px",background:"#f0f9ff",borderRadius:"8px",marginBottom:"20px",borderLeft:"4px solid #0ea5e9"}}>
+              <h3 style={{margin:"0 0 10px",color:"#0369a1"}}>
+                {calcMode === 'calendar' 
+                  ? `Tax Summary for Calendar Year ${taxData.calendar_year} (FY ${taxData.financial_year})`
+                  : `Tax Summary for AY ${taxData.assessment_year}`
+                }
+              </h3>
+              <p style={{margin:0,fontSize:"0.9rem",color:"#374151"}}>
+                {calcMode === 'calendar' ? (
+                  <><strong>Assessment Year:</strong> {taxData.assessment_year} | <strong>Regime:</strong> {taxData.tax_regime}</>
+                ) : (
+                  <><strong>Financial Year:</strong> {taxData.financial_year} | <strong>Regime:</strong> {taxData.tax_regime === 'new' ? 'New Tax Regime' : 'Old Tax Regime'}</>
+                )}
+              </p>
+              {taxData.due_date && (
+                <p style={{margin:"5px 0 0",fontSize:"0.85rem",color:"#dc2626"}}>
+                  <strong>ITR Filing Due Date:</strong> {taxData.due_date}
+                </p>
+              )}
+            </div>
+            
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))",gap:"15px"}}>
+              <div style={{padding:"20px",background:"#f0f9ff",borderRadius:"12px",border:"2px solid #0ea5e9"}}>
+                <div style={{fontSize:"0.9rem",color:"#0369a1",marginBottom:"5px"}}>
+                  {calcMode === 'calendar' ? 'Gross Annual Value' : 'Gross Annual Value'}
+                </div>
+                <div style={{fontSize:"1.5rem",fontWeight:"700",color:"#0c4a6e"}}>
+                  ₹{(taxData.income_details?.gross_annual_value || 0).toLocaleString()}
+                </div>
+              </div>
+              <div style={{padding:"20px",background:"#fef3c7",borderRadius:"12px",border:"2px solid #f59e0b"}}>
+                <div style={{fontSize:"0.9rem",color:"#92400e",marginBottom:"5px"}}>Property Tax</div>
+                <div style={{fontSize:"1.5rem",fontWeight:"700",color:"#78350f"}}>
+                  ₹{(taxData.income_details?.property_tax_paid || 0).toLocaleString()}
+                </div>
+              </div>
+              <div style={{padding:"20px",background:"#f0fdf4",borderRadius:"12px",border:"2px solid #22c55e"}}>
+                <div style={{fontSize:"0.9rem",color:"#166534",marginBottom:"5px"}}>
+                  {calcMode === 'calendar' ? 'Standard Deduction (₹50,000)' : 'Standard Deduction (30%)'}
+                </div>
+                <div style={{fontSize:"1.5rem",fontWeight:"700",color:"#14532d"}}>
+                  ₹{(taxData.income_details?.standard_deduction || 0).toLocaleString()}
+                </div>
+              </div>
+              <div style={{padding:"20px",background:"#faf5ff",borderRadius:"12px",border:"2px solid #a855f7"}}>
+                <div style={{fontSize:"0.9rem",color:"#6b21a8",marginBottom:"5px"}}>Taxable Income</div>
+                <div style={{fontSize:"1.5rem",fontWeight:"700",color:"#581c87"}}>
+                  ₹{(taxData.income_details?.taxable_income || 0).toLocaleString()}
+                </div>
+              </div>
+            </div>
+            
+            {calcMode === 'calendar' && taxData.tax_calculation?.slab_details && (
+              <div style={{padding:"20px",background:"#fff",borderRadius:"12px",border:"2px solid #e5e7eb",marginTop:"20px"}}>
+                <h4 style={{margin:"0 0 15px",color:"#1f2937"}}>Tax Slab Breakdown (New Regime FY 2026-27)</h4>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:"0.9rem"}}>
+                  <thead>
+                    <tr style={{background:"#f3f4f6"}}>
+                      <th style={{padding:"10px",textAlign:"left"}}>Income Slab</th>
+                      <th style={{padding:"10px",textAlign:"center"}}>Rate</th>
+                      <th style={{padding:"10px",textAlign:"right"}}>Taxable Amount</th>
+                      <th style={{padding:"10px",textAlign:"right"}}>Tax</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {taxData.tax_calculation.slab_details.map((slab, idx) => (
+                      <tr key={idx} style={{borderBottom:"1px solid #e5e7eb"}}>
+                        <td style={{padding:"10px"}}>{slab.slab}</td>
+                        <td style={{padding:"10px",textAlign:"center"}}>{slab.rate}</td>
+                        <td style={{padding:"10px",textAlign:"right"}}>₹{Math.round(slab.amount).toLocaleString()}</td>
+                        <td style={{padding:"10px",textAlign:"right",fontWeight:"500"}}>₹{Math.round(slab.tax).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            
+            <div style={{padding:"20px",background:taxData.tax_calculation.total_tax_liability === 0 ? "#f0fdf4" : "#fef2f2",borderRadius:"12px",border:"2px solid " + (taxData.tax_calculation.total_tax_liability === 0 ? "#22c55e" : "#ef4444"),marginTop:"20px"}}>
+              <h3 style={{margin:"0 0 15px",color:taxData.tax_calculation.total_tax_liability === 0 ? "#166534" : "#991b1b"}}>
+                {taxData.tax_calculation.total_tax_liability === 0 ? "No Tax Payable!" : "Tax Liability"}
+              </h3>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))",gap:"15px"}}>
+                <div>
+                  <div style={{fontSize:"0.85rem",color:"#6b7280"}}>Base Tax</div>
+                  <div style={{fontSize:"1.2rem",fontWeight:"600"}}>₹{taxData.tax_calculation.base_tax?.toLocaleString()}</div>
+                </div>
+                {calcMode !== 'calendar' && (
+                  <div>
+                    <div style={{fontSize:"0.85rem",color:"#6b7280"}}>Rebate u/s 87A</div>
+                    <div style={{fontSize:"1.2rem",fontWeight:"600",color:"#22c55e"}}>₹{taxData.tax_calculation.rebate_87a?.toLocaleString()}</div>
+                  </div>
+                )}
+                <div>
+                  <div style={{fontSize:"0.85rem",color:"#6b7280"}}>Health & Education Cess (4%)</div>
+                  <div style={{fontSize:"1.2rem",fontWeight:"600"}}>₹{taxData.tax_calculation.cess_4_percent?.toLocaleString() || taxData.tax_calculation.health_education_cess_4_percent?.toLocaleString()}</div>
+                </div>
+                <div>
+                  <div style={{fontSize:"0.85rem",color:"#6b7280"}}>Total Tax Liability</div>
+                  <div style={{fontSize:"1.2rem",fontWeight:"600",color:taxData.tax_calculation.total_tax_liability > 0 ? "#ef4444" : "#22c55e"}}>₹{taxData.tax_calculation.total_tax_liability?.toLocaleString()}</div>
+                </div>
+                {calcMode !== 'calendar' && (
+                  <div>
+                    <div style={{fontSize:"0.85rem",color:"#6b7280"}}>TDS Credit</div>
+                    <div style={{fontSize:"1.2rem",fontWeight:"600"}}>₹{taxData.tax_calculation.tds_credit?.toLocaleString()}</div>
+                  </div>
+                )}
+                <div>
+                  <div style={{fontSize:"0.85rem",color:"#6b7280"}}>Tax Payable</div>
+                  <div style={{fontSize:"1.2rem",fontWeight:"600",color:taxData.tax_calculation.tax_payable > 0 ? "#ef4444" : "#22c55e"}}>
+                    ₹{taxData.tax_calculation.tax_payable?.toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {taxData.property_breakdown && (
+              <div style={{padding:"20px",background:"#f9fafb",borderRadius:"12px",marginTop:"20px"}}>
+                <h4 style={{margin:"0 0 15px"}}>Property-wise Income Breakdown</h4>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:"0.9rem"}}>
+                  <thead>
+                    <tr style={{background:"#e5e7eb"}}>
+                      <th style={{padding:"10px",textAlign:"left"}}>Property</th>
+                      <th style={{padding:"10px",textAlign:"right"}}>GAV</th>
+                      <th style={{padding:"10px",textAlign:"right"}}>Municipal Tax</th>
+                      <th style={{padding:"10px",textAlign:"right"}}>Std Deduction</th>
+                      <th style={{padding:"10px",textAlign:"right"}}>Income</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {taxData.property_breakdown.map(p => (
+                      <tr key={p.property_id} style={{borderBottom:"1px solid #e5e7eb"}}>
+                        <td style={{padding:"10px"}}>{p.property_name}</td>
+                        <td style={{padding:"10px",textAlign:"right"}}>₹{p.gross_annual_value?.toLocaleString()}</td>
+                        <td style={{padding:"10px",textAlign:"right"}}>₹{Math.round(p.municipal_taxes).toLocaleString()}</td>
+                        <td style={{padding:"10px",textAlign:"right"}}>₹{Math.round(p.standard_deduction_30).toLocaleString()}</td>
+                        <td style={{padding:"10px",textAlign:"right",fontWeight:"500"}}>₹{Math.round(p.income_from_property).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // LAYOUT / APP
 // ═══════════════════════════════════════════════════════════════════════════════
 const PAGES = [
@@ -1792,70 +2670,132 @@ const PAGES = [
   { id:"properties", label:"Properties", icon:"building" },
   { id:"tenants", label:"Tenants", icon:"users" },
   { id:"collections", label:"Collections", icon:"rupee" },
-  { id:"expenses", label:"Expenses", icon:"expense" },
-  { id:"predictions", label:"Predictions", icon:"crystal" },
-  { id:"ledger", label:"Ledger", icon:"file" },
+  { id:"expenses", label:"Expenses", icon:"receipt" },
+  { id:"receipts", label:"Receipts", icon:"receipt" },
+  { id:"predictions", label:"Predictions", icon:"chart" },
+  { id:"taxfiling", label:"Tax Filing", icon:"calculator" },
+  { id:"ledger", label:"Ledger", icon:"book" },
 ];
 
 export default function App() {
   const [page, setPage] = useState("dashboard");
 
-  const pages = { dashboard: <Dashboard/>, properties: <Properties/>, tenants: <Tenants/>, collections: <Collections/>, expenses: <Expenses/>, predictions: <Predictions/>, ledger: <Ledger/> };
+  const pages = { dashboard: <Dashboard/>, properties: <Properties/>, tenants: <Tenants/>, collections: <Collections/>, expenses: <Expenses/>, receipts: <Receipts/>, predictions: <Predictions/>, taxfiling: <TaxFiling/>, ledger: <Ledger/> };
 
   return (
     <>
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        
         :root {
-          --bg: #0f1117;
-          --card: #1a1d27;
-          --border: #2a2d3d;
-          --text: #e8eaf0;
-          --muted: #6b7280;
-          --accent: #f97316;
+          /* Primary Colors - Rich Navy & Teal */
+          --bg: #0a0f1a;
+          --bg-secondary: #111827;
+          --card: #1e293b;
+          --card-hover: #252f47;
+          --border: #334155;
+          --border-light: #475569;
+          
+          /* Text Colors - Better Contrast */
+          --text: #f1f5f9;
+          --text-secondary: #94a3b8;
+          --text-muted: #64748b;
+          
+          /* Accent Colors */
+          --accent: #06b6d4;
+          --accent-hover: #0891b2;
+          --accent-light: #22d3ee;
+          
+          /* Semantic Colors */
+          --success: #10b981;
+          --success-bg: rgba(16, 185, 129, 0.15);
+          --warning: #f59e0b;
+          --warning-bg: rgba(245, 158, 11, 0.15);
+          --error: #ef4444;
+          --error-bg: rgba(239, 68, 68, 0.15);
+          --info: #3b82f6;
+          --info-bg: rgba(59, 130, 246, 0.15);
+          
+          /* Gradients */
+          --gradient-primary: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+          --gradient-success: linear-gradient(135deg, #10b981 0%, #06b6d4 100%);
+          --gradient-card: linear-gradient(145deg, #1e293b 0%, #172033 100%);
+          
+          /* Shadows */
+          --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+          --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+          --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+          --glow-accent: 0 0 20px rgba(6, 182, 212, 0.3);
         }
+        
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: var(--bg); color: var(--text); font-family: 'DM Sans', system-ui, sans-serif; }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: var(--bg); }
-        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-        input:focus, select:focus, textarea:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 3px rgba(249,115,22,0.15); }
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+        
+        body { 
+          background: var(--bg); 
+          color: var(--text); 
+          font-family: 'Inter', system-ui, -apple-system, sans-serif;
+          font-size: 14px;
+          line-height: 1.5;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-secondary); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+        
+        /* Focus States */
+        input:focus, select:focus, textarea:focus { 
+          border-color: var(--accent) !important; 
+          box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.25);
+          outline: none;
+        }
+        
+        /* Selection */
+        ::selection {
+          background: var(--accent);
+          color: var(--bg);
+        }
       `}</style>
-      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
-      <div style={{display:"flex",minHeight:"100vh"}}>
+      <div style={{display:"flex",minHeight:"100vh",background:"var(--bg)"}}>
         {/* Sidebar */}
-        <aside style={{width:"220px",background:"var(--card)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",position:"fixed",top:0,left:0,bottom:0,zIndex:100}}>
-          <div style={{padding:"24px 20px",borderBottom:"1px solid var(--border)"}}>
-            <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
-              <div style={{width:36,height:36,borderRadius:"10px",background:"linear-gradient(135deg,#f97316,#ea580c)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                <Icon name="home" size={18}/>
+        <aside style={{width:"260px",background:"linear-gradient(180deg, #0f172a 0%, #1e293b 100%)",borderRight:"1px solid var(--border)",display:"flex",flexDirection:"column",position:"fixed",top:0,left:0,bottom:0,zIndex:100,boxShadow:"var(--shadow-lg)"}}>
+          <div style={{padding:"28px 24px",borderBottom:"1px solid var(--border)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:"12px"}}>
+              <div style={{width:44,height:44,borderRadius:"12px",background:"var(--gradient-primary)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"var(--glow-accent)"}}>
+                <Icon name="home" size={20} color="#fff"/>
               </div>
               <div>
-                <div style={{fontWeight:800,fontSize:"15px",color:"var(--text)"}}>Rental Manager</div>
-                <div style={{fontSize:"11px",color:"var(--muted)"}}>Property Manager</div>
+                <div style={{fontWeight:700,fontSize:"16px",color:"var(--text)",letterSpacing:"-0.3px"}}>Rental Manager</div>
+                <div style={{fontSize:"12px",color:"var(--text-secondary)",marginTop:"2px"}}>Property Manager</div>
               </div>
             </div>
           </div>
-          <nav style={{padding:"12px 10px",flex:1}}>
+          <nav style={{padding:"16px 12px",flex:1}}>
             {PAGES.map(p => (
               <button key={p.id} onClick={() => setPage(p.id)} style={{
-                width:"100%",display:"flex",alignItems:"center",gap:"10px",padding:"10px 12px",
-                borderRadius:"10px",border:"none",cursor:"pointer",fontSize:"13px",fontWeight:page===p.id?600:500,
-                textAlign:"left",marginBottom:"2px",transition:"all 0.15s",
-                background:page===p.id?"var(--accent)22":"transparent",
-                color:page===p.id?"var(--accent)":"var(--muted)"
+                width:"100%",display:"flex",alignItems:"center",gap:"12px",padding:"12px 16px",
+                borderRadius:"10px",border:"none",cursor:"pointer",fontSize:"14px",fontWeight:page===p.id?600:500,
+                textAlign:"left",marginBottom:"4px",transition:"all 0.2s ease",
+                background:page===p.id?"var(--accent)":"transparent",
+                color:page===p.id?"#fff":"var(--text-secondary)",
+                boxShadow:page===p.id?"var(--shadow)":"none"
               }}>
-                <Icon name={p.icon} size={16}/>{p.label}
+                <Icon name={p.icon} size={18} color={page===p.id?"#fff":"var(--text-muted)"}/>
+                <span>{p.label}</span>
+                {page===p.id && <span style={{marginLeft:"auto",fontSize:"10px",opacity:0.7}}>●</span>}
               </button>
             ))}
           </nav>
-          <div style={{padding:"16px",borderTop:"1px solid var(--border)",fontSize:"11px",color:"var(--muted)",textAlign:"center",lineHeight:1.6}}>
-            <div>Rental Manager v1.0</div>
-            <div>All amounts in ₹ INR</div>
+          <div style={{padding:"20px",borderTop:"1px solid var(--border)",fontSize:"12px",color:"var(--text-muted)",textAlign:"center",background:"rgba(15, 23, 42, 0.5)"}}>
+            <div style={{fontWeight:500,color:"var(--text-secondary)"}}>Rental Manager v2.0</div>
+            <div style={{marginTop:"4px"}}>All amounts in ₹ INR</div>
           </div>
         </aside>
         {/* Main */}
-        <main style={{marginLeft:"220px",flex:1,padding:"32px",minHeight:"100vh",maxWidth:"calc(100vw - 220px)"}}>
+        <main style={{marginLeft:"260px",flex:1,padding:"32px",minHeight:"100vh",maxWidth:"calc(100vw - 260px)",boxSizing:"border-box"}}>
           {pages[page]}
         </main>
       </div>

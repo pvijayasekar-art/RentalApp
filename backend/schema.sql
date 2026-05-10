@@ -27,9 +27,33 @@ CREATE TABLE IF NOT EXISTS tenants (
   start_date DATE,
   end_date DATE,
   security_deposit DECIMAL(12,2) DEFAULT 0,
+  monthly_rent DECIMAL(12,2) DEFAULT 0,
   status ENUM('active','inactive','notice') DEFAULT 'active',
+  -- TDS Section 194-IB fields
+  tds_applicable BOOLEAN DEFAULT FALSE,
+  tds_rate DECIMAL(5,2) DEFAULT 5.00,
+  tds_section VARCHAR(20) DEFAULT '194-IB',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE SET NULL
+);
+
+-- TDS Deposits Tracking Table
+CREATE TABLE IF NOT EXISTS tds_deposits (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  property_id INT,
+  month_year VARCHAR(20) NOT NULL,
+  rent_amount DECIMAL(12,2) NOT NULL,
+  tds_amount DECIMAL(12,2) NOT NULL,
+  tds_rate DECIMAL(5,2) DEFAULT 5.00,
+  status ENUM('pending','deposited') DEFAULT 'pending',
+  deposit_date DATE,
+  challan_number VARCHAR(100),
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE SET NULL,
+  UNIQUE KEY unique_tds_month (tenant_id, month_year)
 );
 
 CREATE TABLE IF NOT EXISTS collections (
@@ -44,6 +68,7 @@ CREATE TABLE IF NOT EXISTS collections (
   status ENUM('paid','pending','partial','overdue') DEFAULT 'paid',
   notes TEXT,
   reference_number VARCHAR(100),
+  receipt_id INT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
@@ -131,6 +156,45 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL
 );
 
+-- Receipts Table
+CREATE TABLE IF NOT EXISTS receipts (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  receipt_number VARCHAR(50) NOT NULL UNIQUE,
+  tenant_id INT NOT NULL,
+  property_id INT NOT NULL,
+  collection_id INT,
+  receipt_date DATE NOT NULL,
+  month_year VARCHAR(20) NOT NULL,
+  rent_amount DECIMAL(12,2) NOT NULL,
+  maintenance_amount DECIMAL(12,2) DEFAULT 0,
+  utility_amount DECIMAL(12,2) DEFAULT 0,
+  total_amount DECIMAL(12,2) NOT NULL,
+  payment_method ENUM('cash', 'upi', 'bank_transfer', 'cheque', 'online') NOT NULL,
+  payment_date DATE,
+  reference_number VARCHAR(100),
+  status ENUM('generated', 'sent', 'viewed', 'downloaded') DEFAULT 'generated',
+  sent_date DATE,
+  receipt_content TEXT,
+  receipt_url VARCHAR(500),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
+  FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE SET NULL
+);
+
+-- Receipt History Table
+CREATE TABLE IF NOT EXISTS receipts_history (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  receipt_id INT NOT NULL,
+  action ENUM('generated', 'sent_email', 'sent_whatsapp', 'viewed', 'downloaded', 'resent') NOT NULL,
+  action_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  action_by VARCHAR(100),
+  ip_address VARCHAR(50),
+  details TEXT,
+  FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+);
+
 -- Sample data
 INSERT INTO properties (name, address, type, total_units, monthly_rent, status) VALUES
 ('Sunrise Apartments', '12, MG Road, Bengaluru, Karnataka 560001', 'apartment', 8, 18000.00, 'active'),
@@ -157,3 +221,7 @@ INSERT INTO expenses (property_id, category, description, amount, expense_date, 
 (2, 'repairs', 'Plumbing repair - kitchen sink', 2500.00, '2025-03-20', 'Local Plumber', 'paid'),
 (3, 'taxes', 'Property tax Q1 2025', 15000.00, '2025-03-01', 'Municipal Corporation', 'paid'),
 (NULL, 'insurance', 'Annual building insurance renewal', 22000.00, '2025-01-01', 'LIC Property Insurance', 'paid');
+
+-- Add foreign key from collections to receipts (after both tables exist)
+ALTER TABLE collections 
+ADD FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE SET NULL;

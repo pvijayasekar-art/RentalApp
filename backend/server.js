@@ -160,14 +160,24 @@ app.get('/api/tenants', async (req, res) => {
 
 app.post('/api/tenants', async (req, res) => {
   const { name, email, phone, aadhar_number, pan_number, emergency_contact,
-          property_id, unit_number, start_date, end_date, security_deposit, status } = req.body;
+          property_id, unit_number, start_date, end_date, security_deposit, monthly_rent, status,
+          tds_applicable, tds_rate, tds_section } = req.body;
+  
+  // Auto-calculate TDS applicability if monthly rent > 50000
+  const autoTdsApplicable = monthly_rent > 50000;
+  const finalTdsApplicable = tds_applicable !== undefined ? tds_applicable : autoTdsApplicable;
+  const finalTdsRate = tds_rate || (finalTdsApplicable ? 5.00 : 0);
+  const finalTdsSection = tds_section || '194-IB';
+  
   try {
     const [result] = await pool.query(
       `INSERT INTO tenants (name,email,phone,aadhar_number,pan_number,emergency_contact,
-       property_id,unit_number,start_date,end_date,security_deposit,status) 
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+       property_id,unit_number,start_date,end_date,security_deposit,monthly_rent,status,
+       tds_applicable,tds_rate,tds_section) 
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [name, email, phone, aadhar_number, pan_number, emergency_contact,
-       property_id, unit_number, start_date, end_date, security_deposit || 0, status || 'active']
+       property_id, unit_number, start_date, end_date, security_deposit || 0, monthly_rent || 0, status || 'active',
+       finalTdsApplicable, finalTdsRate, finalTdsSection]
     );
     res.json({ id: result.insertId, message: 'Tenant added successfully' });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -175,14 +185,24 @@ app.post('/api/tenants', async (req, res) => {
 
 app.put('/api/tenants/:id', async (req, res) => {
   const { name, email, phone, aadhar_number, pan_number, emergency_contact,
-          property_id, unit_number, start_date, end_date, security_deposit, status } = req.body;
+          property_id, unit_number, start_date, end_date, security_deposit, monthly_rent, status,
+          tds_applicable, tds_rate, tds_section } = req.body;
+  
+  // Auto-calculate TDS applicability if monthly rent > 50000
+  const autoTdsApplicable = monthly_rent > 50000;
+  const finalTdsApplicable = tds_applicable !== undefined ? tds_applicable : autoTdsApplicable;
+  const finalTdsRate = tds_rate || (finalTdsApplicable ? 5.00 : 0);
+  const finalTdsSection = tds_section || '194-IB';
+  
   try {
     await pool.query(
       `UPDATE tenants SET name=?,email=?,phone=?,aadhar_number=?,pan_number=?,
        emergency_contact=?,property_id=?,unit_number=?,start_date=?,
-       end_date=?,security_deposit=?,status=? WHERE id=?`,
+       end_date=?,security_deposit=?,monthly_rent=?,status=?,
+       tds_applicable=?,tds_rate=?,tds_section=? WHERE id=?`,
       [name, email, phone, aadhar_number, pan_number, emergency_contact,
-       property_id, unit_number, start_date, end_date, security_deposit, status, req.params.id]
+       property_id, unit_number, start_date, end_date, security_deposit, monthly_rent, status,
+       finalTdsApplicable, finalTdsRate, finalTdsSection, req.params.id]
     );
     res.json({ message: 'Tenant updated successfully' });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -195,14 +215,86 @@ app.delete('/api/tenants/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── TDS (Section 194-IB) ───────────────────────────────────────────────────
+// Get TDS deposits for a tenant
+app.get('/api/tenants/:id/tds', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT td.*, t.name as tenant_name, p.name as property_name
+       FROM tds_deposits td
+       JOIN tenants t ON td.tenant_id = t.id
+       LEFT JOIN properties p ON td.property_id = p.id
+       WHERE td.tenant_id = ?
+       ORDER BY td.month_year DESC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Add TDS deposit record
+app.post('/api/tenants/:id/tds', async (req, res) => {
+  const { month_year, rent_amount, tds_amount, tds_rate, deposit_date, challan_number, notes } = req.body;
+  try {
+    // Get tenant info for property_id
+    const [tenant] = await pool.query('SELECT property_id FROM tenants WHERE id = ?', [req.params.id]);
+    const property_id = tenant[0]?.property_id || null;
+    
+    const [result] = await pool.query(
+      `INSERT INTO tds_deposits (tenant_id, property_id, month_year, rent_amount, tds_amount, tds_rate, status, deposit_date, challan_number, notes)
+       VALUES (?, ?, ?, ?, ?, ?, 'deposited', ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+       rent_amount = VALUES(rent_amount),
+       tds_amount = VALUES(tds_amount),
+       tds_rate = VALUES(tds_rate),
+       status = 'deposited',
+       deposit_date = VALUES(deposit_date),
+       challan_number = VALUES(challan_number),
+       notes = VALUES(notes)`,
+      [req.params.id, property_id, month_year, rent_amount, tds_amount, tds_rate || 5.00, deposit_date, challan_number, notes]
+    );
+    res.json({ id: result.insertId || result.affectedRows, message: 'TDS deposit recorded' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Get all TDS summary report
+app.get('/api/tds-report', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT 
+        t.id as tenant_id,
+        t.name as tenant_name,
+        t.monthly_rent,
+        t.tds_applicable,
+        t.tds_rate,
+        p.name as property_name,
+        COUNT(td.id) as deposits_count,
+        SUM(CASE WHEN td.status = 'pending' THEN td.tds_amount ELSE 0 END) as pending_tds,
+        SUM(CASE WHEN td.status = 'deposited' THEN td.tds_amount ELSE 0 END) as deposited_tds
+      FROM tenants t
+      LEFT JOIN properties p ON t.property_id = p.id
+      LEFT JOIN tds_deposits td ON t.id = td.tenant_id
+      WHERE t.tds_applicable = TRUE
+      GROUP BY t.id
+      ORDER BY t.name
+    `);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── COLLECTIONS ────────────────────────────────────────────────────────────
 app.get('/api/collections', async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT c.*, t.name as tenant_name, p.name as property_name 
+      SELECT c.*, t.name as tenant_name, p.name as property_name,
+             COALESCE(c.receipt_id, r.id) as receipt_id,
+             r.receipt_number,
+             r.status as receipt_status
       FROM collections c 
       JOIN tenants t ON c.tenant_id=t.id 
       JOIN properties p ON c.property_id=p.id 
+      LEFT JOIN receipts r ON r.collection_id = c.id 
+                         OR (r.tenant_id = c.tenant_id AND r.month_year = c.month_year AND r.collection_id IS NULL)
       ORDER BY c.payment_date DESC
     `);
     res.json(rows);
@@ -248,8 +340,26 @@ app.post('/api/collections', async (req, res) => {
        collectionId, 'collection', panNumber, fyYear, quarter, tenantName]
     );
     
+    // Auto-generate receipt if collection is marked as paid
+    let autoReceipt = null;
+    const collectionStatus = status || 'paid';
+    if (collectionStatus === 'paid' && (category || 'rent') === 'rent') {
+      autoReceipt = await autoGenerateReceipt(connection, {
+        id: collectionId, tenant_id, property_id, amount,
+        month_year, payment_method, payment_date, reference_number,
+        category: category || 'rent'
+      });
+    }
+    
     await connection.commit();
-    res.json({ id: collectionId, message: 'Collection recorded and ledger entry created' });
+    
+    res.json({ 
+      id: collectionId, 
+      message: autoReceipt 
+        ? 'Collection recorded, ledger entry created, and receipt generated' 
+        : 'Collection recorded and ledger entry created',
+      receipt: autoReceipt
+    });
   } catch (err) { 
     await connection.rollback();
     res.status(500).json({ error: err.message }); 
@@ -314,8 +424,31 @@ app.put('/api/collections/:id', async (req, res) => {
       );
     }
     
+    // Check if collection status changed to paid and no receipt exists
+    let autoReceipt = null;
+    if (status === 'paid' && category === 'rent') {
+      // Check if receipt already exists for this collection
+      const [[collection]] = await connection.query(
+        'SELECT receipt_id FROM collections WHERE id = ?',
+        [req.params.id]
+      );
+      
+      if (!collection || !collection.receipt_id) {
+        autoReceipt = await autoGenerateReceipt(connection, {
+          id: parseInt(req.params.id), tenant_id, property_id, amount,
+          month_year, payment_method, payment_date, reference_number,
+          category, receipt_id: null
+        });
+      }
+    }
+    
     await connection.commit();
-    res.json({ message: 'Collection and ledger entry updated successfully' });
+    res.json({ 
+      message: autoReceipt 
+        ? 'Collection updated, ledger entry updated, and receipt generated' 
+        : 'Collection and ledger entry updated successfully',
+      receipt: autoReceipt
+    });
   } catch (err) { 
     await connection.rollback();
     res.status(500).json({ error: err.message }); 
@@ -1091,6 +1224,138 @@ app.get('/api/ledger/returns-filing/:year', async (req, res) => {
   }
 });
 
+// ─── INCOME TAX CALCULATION ─────────────────────────────────────────────────
+// Calculate income tax under new regime for calendar year
+app.get('/api/tax/calculate-calendar-year/:calendarYear', async (req, res) => {
+  try {
+    const { calendarYear } = req.params;
+    const { deductions80C = 0 } = req.query;
+    
+    const year = parseInt(calendarYear);
+    
+    console.log(`[TAX-CALC] Calculating tax for calendar year: ${year}`);
+    
+    // Get Gross Annual Value from rent collections for the calendar year (exclude deposits)
+    const [collectionsData] = await pool.query(
+      `SELECT 
+        COALESCE(SUM(amount), 0) as gross_annual_value,
+        COUNT(*) as collection_count
+       FROM collections 
+       WHERE YEAR(payment_date) = ? 
+         AND status = 'paid' 
+         AND (type = 'rent' OR type IS NULL OR type = '')`,
+      [year]
+    );
+    
+    console.log(`[TAX-CALC] Collections query result:`, collectionsData[0]);
+    
+    // Get property taxes from expenses for the calendar year
+    const [expensesData] = await pool.query(
+      `SELECT 
+        COALESCE(SUM(amount), 0) as property_taxes,
+        COUNT(*) as expense_count
+       FROM expenses 
+       WHERE YEAR(expense_date) = ? AND category = 'taxes'`,
+      [year]
+    );
+    
+    console.log(`[TAX-CALC] Expenses query result:`, expensesData[0]);
+    
+    const grossAnnualValue = parseFloat(collectionsData[0]?.gross_annual_value || 0);
+    const propertyTaxPaid = parseFloat(expensesData[0]?.property_taxes || 0);
+    const deduction80C = parseFloat(deductions80C) || 0;
+    
+    // Standard deduction for FY 2026-27 under new regime
+    const standardDeduction = 50000;
+    
+    // Calculate taxable income
+    const netRentalIncome = grossAnnualValue - propertyTaxPaid;
+    const taxableIncome = Math.max(0, netRentalIncome - standardDeduction);
+    
+    console.log(`[TAX-CALC] GAV: ${grossAnnualValue}, Property Tax: ${propertyTaxPaid}, Net: ${netRentalIncome}, Taxable: ${taxableIncome}`);
+    
+    // New Tax Regime slabs for FY 2026-27 (AY 2027-28)
+    let tax = 0;
+    let slabDetails = [];
+    const remainingIncome = taxableIncome;
+    
+    if (remainingIncome <= 300000) {
+      slabDetails.push({ slab: "0 - 3,00,000", rate: "0%", amount: remainingIncome, tax: 0 });
+    } else {
+      slabDetails.push({ slab: "0 - 3,00,000", rate: "0%", amount: 300000, tax: 0 });
+    }
+    
+    if (remainingIncome > 300000) {
+      const slab2Amount = Math.min(300000, remainingIncome - 300000);
+      const slab2Tax = slab2Amount * 0.05;
+      tax += slab2Tax;
+      slabDetails.push({ slab: "3,00,001 - 6,00,000", rate: "5%", amount: slab2Amount, tax: slab2Tax });
+    }
+    
+    if (remainingIncome > 600000) {
+      const slab3Amount = Math.min(300000, remainingIncome - 600000);
+      const slab3Tax = slab3Amount * 0.10;
+      tax += slab3Tax;
+      slabDetails.push({ slab: "6,00,001 - 9,00,000", rate: "10%", amount: slab3Amount, tax: slab3Tax });
+    }
+    
+    if (remainingIncome > 900000) {
+      const slab4Amount = Math.min(300000, remainingIncome - 900000);
+      const slab4Tax = slab4Amount * 0.15;
+      tax += slab4Tax;
+      slabDetails.push({ slab: "9,00,001 - 12,00,000", rate: "15%", amount: slab4Amount, tax: slab4Tax });
+    }
+    
+    if (remainingIncome > 1200000) {
+      const slab5Amount = Math.min(300000, remainingIncome - 1200000);
+      const slab5Tax = slab5Amount * 0.20;
+      tax += slab5Tax;
+      slabDetails.push({ slab: "12,00,001 - 15,00,000", rate: "20%", amount: slab5Amount, tax: slab5Tax });
+    }
+    
+    if (remainingIncome > 1500000) {
+      const slab6Amount = remainingIncome - 1500000;
+      const slab6Tax = slab6Amount * 0.30;
+      tax += slab6Tax;
+      slabDetails.push({ slab: "Above 15,00,000", rate: "30%", amount: slab6Amount, tax: slab6Tax });
+    }
+    
+    // Health and Education Cess @ 4%
+    const cess = tax * 0.04;
+    const totalTaxLiability = tax + cess;
+    
+    // Total tax payable
+    const taxPayable = totalTaxLiability;
+    
+    res.json({
+      calendar_year: calendarYear,
+      financial_year: `${year}-${(year + 1).toString().slice(-2)}`,
+      assessment_year: `${year + 1}-${(year + 2).toString().slice(-2)}`,
+      tax_regime: "New Regime",
+      income_details: {
+        gross_annual_value: grossAnnualValue,
+        property_tax_paid: propertyTaxPaid,
+        net_rental_income: netRentalIncome,
+        standard_deduction: standardDeduction,
+        deductions_80c: deduction80C,
+        taxable_income: taxableIncome
+      },
+      tax_calculation: {
+        slab_details: slabDetails,
+        base_tax: tax,
+        health_education_cess_4_percent: cess,
+        total_tax_liability: totalTaxLiability,
+        tax_payable: taxPayable
+      },
+      itr_form: "ITR-2",
+      due_date: `July 31, ${year + 1}`
+    });
+  } catch (err) {
+    console.error('Tax calculation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── PAYMENT REFERENCE EXTRACTION ───────────────────────────────────────────
 // Extract reference number from payment proof and update collection
 app.post('/api/collections/:collectionId/extract-reference', async (req, res) => {
@@ -1279,10 +1544,15 @@ app.get('/api/backup/export', async (req, res) => {
     const [tenants] = await pool.query('SELECT * FROM tenants');
     const [collections] = await pool.query('SELECT * FROM collections');
     const [expenses] = await pool.query('SELECT * FROM expenses');
+    const [tdsDeposits] = await pool.query('SELECT * FROM tds_deposits');
     const [ledger] = await pool.query('SELECT * FROM ledger_entries');
     const [tenantDocs] = await pool.query('SELECT * FROM tenant_documents');
     const [collectionDocs] = await pool.query('SELECT * FROM collection_documents');
     const [expenseDocs] = await pool.query('SELECT * FROM expense_documents');
+    const [taxFilings] = await pool.query('SELECT * FROM tax_filings');
+    const [receipts] = await pool.query('SELECT * FROM receipts');
+    const [receiptsHistory] = await pool.query('SELECT * FROM receipts_history');
+    const [taxFilingProps] = await pool.query('SELECT * FROM tax_filing_properties');
     
     // Convert BLOB buffers to base64 strings for JSON serialization
     const serializeDocuments = (docs) => docs.map(d => ({
@@ -1292,16 +1562,21 @@ app.get('/api/backup/export', async (req, res) => {
     
     const backupData = {
       exported_at: new Date().toISOString(),
-      version: '1.0',
+      version: '3.0_with_tax_receipts',
       tables: {
         properties,
         tenants,
         collections,
         expenses,
+        tds_deposits: tdsDeposits,
         ledger_entries: ledger,
         tenant_documents: serializeDocuments(tenantDocs),
         collection_documents: serializeDocuments(collectionDocs),
-        expense_documents: serializeDocuments(expenseDocs)
+        expense_documents: serializeDocuments(expenseDocs),
+        tax_filings: taxFilings,
+        receipts: receipts,
+        receipts_history: receiptsHistory,
+        tax_filing_properties: taxFilingProps
       }
     };
     
@@ -1332,6 +1607,11 @@ app.post('/api/backup/restore', async (req, res) => {
     await connection.query('TRUNCATE TABLE tenant_documents');
     await connection.query('TRUNCATE TABLE expense_documents');
     await connection.query('TRUNCATE TABLE ledger_entries');
+    await connection.query('TRUNCATE TABLE receipts_history');
+    await connection.query('TRUNCATE TABLE receipts');
+    await connection.query('TRUNCATE TABLE tax_filing_properties');
+    await connection.query('TRUNCATE TABLE tax_filings');
+    await connection.query('TRUNCATE TABLE tds_deposits');
     await connection.query('TRUNCATE TABLE collections');
     await connection.query('TRUNCATE TABLE expenses');
     await connection.query('TRUNCATE TABLE tenants');
@@ -1339,7 +1619,7 @@ app.post('/api/backup/restore', async (req, res) => {
     await connection.query('SET FOREIGN_KEY_CHECKS = 1');
     
     // Restore data
-    const { properties, tenants, collections, expenses, ledger_entries, tenant_documents, collection_documents, expense_documents } = backupData.tables;
+    const { properties, tenants, collections, expenses, tds_deposits, ledger_entries, tenant_documents, collection_documents, expense_documents, tax_filings, receipts, receipts_history, tax_filing_properties } = backupData.tables;
     
     if (properties?.length) {
       for (const p of properties) {
@@ -1353,8 +1633,8 @@ app.post('/api/backup/restore', async (req, res) => {
     if (tenants?.length) {
       for (const t of tenants) {
         await connection.query(
-          'INSERT INTO tenants (id,name,email,phone,aadhar_number,pan_number,emergency_contact,property_id,unit_number,start_date,end_date,security_deposit,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-          [t.id, t.name, t.email, t.phone, t.aadhar_number, t.pan_number, t.emergency_contact, t.property_id, t.unit_number, t.start_date, t.end_date, t.security_deposit, t.status, t.created_at]
+          'INSERT INTO tenants (id,name,email,phone,aadhar_number,pan_number,emergency_contact,property_id,unit_number,start_date,end_date,security_deposit,monthly_rent,status,tds_applicable,tds_rate,tds_section,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [t.id, t.name, t.email, t.phone, t.aadhar_number, t.pan_number, t.emergency_contact, t.property_id, t.unit_number, t.start_date, t.end_date, t.security_deposit, t.monthly_rent || 0, t.status, t.tds_applicable || false, t.tds_rate || 5.00, t.tds_section || '194-IB', t.created_at]
         );
       }
     }
@@ -1364,6 +1644,15 @@ app.post('/api/backup/restore', async (req, res) => {
         await connection.query(
           'INSERT INTO collections (id,tenant_id,property_id,amount,payment_date,payment_method,category,month_year,status,notes,reference_number,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
           [c.id, c.tenant_id, c.property_id, c.amount, c.payment_date, c.payment_method, c.category, c.month_year, c.status, c.notes, c.reference_number, c.created_at]
+        );
+      }
+    }
+    
+    if (tds_deposits?.length) {
+      for (const td of tds_deposits) {
+        await connection.query(
+          'INSERT INTO tds_deposits (id,tenant_id,property_id,month_year,rent_amount,tds_amount,tds_rate,status,deposit_date,challan_number,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+          [td.id, td.tenant_id, td.property_id, td.month_year, td.rent_amount, td.tds_amount, td.tds_rate, td.status, td.deposit_date, td.challan_number, td.notes, td.created_at]
         );
       }
     }
@@ -1424,6 +1713,50 @@ app.post('/api/backup/restore', async (req, res) => {
         await connection.query(
           'INSERT INTO expense_documents (id,expense_id,filename,original_name,mime_type,file_size,file_content,description,uploaded_at) VALUES (?,?,?,?,?,?,?,?,?)',
           [d.id, d.expense_id, d.filename, d.original_name, d.mime_type, d.file_size, fileContent, d.description, toMySQLDateTime(d.uploaded_at)]
+        );
+      }
+    }
+    
+    // Restore tax filings (if available in backup)
+    if (tax_filings?.length) {
+      for (const tf of tax_filings) {
+        await connection.query(
+          `INSERT INTO tax_filings (id,assessment_year,financial_year,filing_type,tax_regime,salary_income,house_property_income,other_income,gross_total_income,municipal_taxes_paid,standard_deduction,deduction_80c,deduction_80d,deduction_80g,deduction_80tta,other_deductions,total_deductions,taxable_income,tax_payable,cess_amount,total_tax_liability,tds_credit,advance_tax_paid,self_assessment_tax,tax_refund,property_details,status,filed_date,acknowledgement_number,created_at,updated_at) 
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [tf.id, tf.assessment_year, tf.financial_year, tf.filing_type, tf.tax_regime, tf.salary_income, tf.house_property_income, tf.other_income, tf.gross_total_income, tf.municipal_taxes_paid, tf.standard_deduction, tf.deduction_80c, tf.deduction_80d, tf.deduction_80g, tf.deduction_80tta, tf.other_deductions, tf.total_deductions, tf.taxable_income, tf.tax_payable, tf.cess_amount, tf.total_tax_liability, tf.tds_credit, tf.advance_tax_paid, tf.self_assessment_tax, tf.tax_refund, tf.property_details, tf.status, tf.filed_date, tf.acknowledgement_number, tf.created_at, tf.updated_at]
+        );
+      }
+    }
+    
+    // Restore receipts (if available in backup)
+    if (receipts?.length) {
+      for (const r of receipts) {
+        await connection.query(
+          `INSERT INTO receipts (id,receipt_number,tenant_id,property_id,collection_id,receipt_date,month_year,rent_amount,maintenance_amount,utility_amount,total_amount,payment_method,payment_date,reference_number,status,sent_date,receipt_content,receipt_url,created_at,updated_at) 
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [r.id, r.receipt_number, r.tenant_id, r.property_id, r.collection_id, r.receipt_date, r.month_year, r.rent_amount, r.maintenance_amount, r.utility_amount, r.total_amount, r.payment_method, r.payment_date, r.reference_number, r.status, r.sent_date, r.receipt_content, r.receipt_url, r.created_at, r.updated_at]
+        );
+      }
+    }
+    
+    // Restore receipts history (if available in backup)
+    if (receipts_history?.length) {
+      for (const rh of receipts_history) {
+        await connection.query(
+          `INSERT INTO receipts_history (id,receipt_id,action,action_date,action_by,ip_address,details) 
+           VALUES (?,?,?,?,?,?,?)`,
+          [rh.id, rh.receipt_id, rh.action, rh.action_date, rh.action_by, rh.ip_address, rh.details]
+        );
+      }
+    }
+    
+    // Restore tax filing properties (if available in backup)
+    if (tax_filing_properties?.length) {
+      for (const tfp of tax_filing_properties) {
+        await connection.query(
+          `INSERT INTO tax_filing_properties (id,tax_filing_id,property_id,expected_rent,actual_rent_collected,gross_annual_value,municipal_taxes,net_annual_value,standard_deduction,interest_on_loan,income_from_property,created_at) 
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [tfp.id, tfp.tax_filing_id, tfp.property_id, tfp.expected_rent, tfp.actual_rent_collected, tfp.gross_annual_value, tfp.municipal_taxes, tfp.net_annual_value, tfp.standard_deduction, tfp.interest_on_loan, tfp.income_from_property, tfp.created_at]
         );
       }
     }
@@ -2097,10 +2430,15 @@ async function createAutoBackup(reason) {
     const [tenants] = await pool.query('SELECT * FROM tenants');
     const [collections] = await pool.query('SELECT * FROM collections');
     const [expenses] = await pool.query('SELECT * FROM expenses');
+    const [tdsDeposits] = await pool.query('SELECT * FROM tds_deposits');
     const [ledger] = await pool.query('SELECT * FROM ledger_entries');
     const [tenantDocs] = await pool.query('SELECT * FROM tenant_documents');
     const [collectionDocs] = await pool.query('SELECT * FROM collection_documents');
     const [expenseDocs] = await pool.query('SELECT * FROM expense_documents');
+    const [taxFilings] = await pool.query('SELECT * FROM tax_filings');
+    const [receipts] = await pool.query('SELECT * FROM receipts');
+    const [receiptsHistory] = await pool.query('SELECT * FROM receipts_history');
+    const [taxFilingProps] = await pool.query('SELECT * FROM tax_filing_properties');
     
     // Convert BLOB buffers to base64 strings for JSON serialization
     const serializeDocuments = (docs) => docs.map(d => ({
@@ -2110,17 +2448,22 @@ async function createAutoBackup(reason) {
     
     const backupData = {
       exported_at: new Date().toISOString(),
-      version: '1.0',
+      version: '3.0_with_tax_receipts',
       reason: reason,
       tables: {
         properties,
         tenants,
         collections,
         expenses,
+        tds_deposits: tdsDeposits,
         ledger_entries: ledger,
         tenant_documents: serializeDocuments(tenantDocs),
         collection_documents: serializeDocuments(collectionDocs),
-        expense_documents: serializeDocuments(expenseDocs)
+        expense_documents: serializeDocuments(expenseDocs),
+        tax_filings: taxFilings,
+        receipts: receipts,
+        receipts_history: receiptsHistory,
+        tax_filing_properties: taxFilingProps
       }
     };
     
@@ -2213,6 +2556,859 @@ process.on('unhandledRejection', async (reason, promise) => {
   setTimeout(() => {
     process.exit(1);
   }, 2000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INCOME TAX CALCULATION & RECEIPTS SECTION
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Calculate Income Tax for AY 2025-26 (New Tax Regime)
+app.get('/api/tax/calculate/:assessmentYear', async (req, res) => {
+  const { assessmentYear } = req.params;
+  const { financialYear = '2024-25', municipalTaxes = 0, deductions80C = 0, deductions80D = 0 } = req.query;
+  
+  try {
+    // Get all collections for the financial year
+    const fyStart = `${financialYear.split('-')[0]}-04-01`;
+    const fyEnd = `20${financialYear.split('-')[1]}-03-31`;
+    
+    const [collections] = await pool.query(`
+      SELECT 
+        p.id as property_id,
+        p.name as property_name,
+        p.monthly_rent as expected_rent,
+        c.tenant_id,
+        t.name as tenant_name,
+        c.amount,
+        c.payment_date,
+        c.month_year,
+        c.category
+      FROM collections c
+      JOIN properties p ON c.property_id = p.id
+      JOIN tenants t ON c.tenant_id = t.id
+      WHERE c.status = 'paid'
+        AND c.payment_date >= ?
+        AND c.payment_date <= ?
+      ORDER BY p.name, c.payment_date
+    `, [fyStart, fyEnd]);
+    
+    // Get all expenses for the financial year
+    const [expenses] = await pool.query(`
+      SELECT 
+        p.id as property_id,
+        p.name as property_name,
+        e.amount,
+        e.expense_date,
+        e.category
+      FROM expenses e
+      LEFT JOIN properties p ON e.property_id = p.id
+      WHERE e.expense_date >= ?
+        AND e.expense_date <= ?
+    `, [fyStart, fyEnd]);
+    
+    // Calculate property-wise income
+    const propertyIncome = {};
+    const propertyExpenses = {};
+    
+    collections.forEach(col => {
+      const pid = col.property_id;
+      if (!propertyIncome[pid]) {
+        propertyIncome[pid] = {
+          property_id: pid,
+          property_name: col.property_name,
+          expected_rent: parseFloat(col.expected_rent) || 0,
+          actual_rent: 0,
+          months_collected: new Set(),
+          tenant_details: []
+        };
+      }
+      propertyIncome[pid].actual_rent += parseFloat(col.amount);
+      propertyIncome[pid].months_collected.add(col.month_year);
+      propertyIncome[pid].tenant_details.push({
+        tenant_name: col.tenant_name,
+        amount: col.amount,
+        month_year: col.month_year,
+        payment_date: col.payment_date
+      });
+    });
+    
+    expenses.forEach(exp => {
+      const pid = exp.property_id || 'unallocated';
+      if (!propertyExpenses[pid]) {
+        propertyExpenses[pid] = { total: 0, details: [] };
+      }
+      propertyExpenses[pid].total += parseFloat(exp.amount);
+      propertyExpenses[pid].details.push({
+        amount: exp.amount,
+        category: exp.category,
+        date: exp.expense_date
+      });
+    });
+    
+    // Calculate GAV and NAV for each property
+    const propertyTaxDetails = Object.values(propertyIncome).map(prop => {
+      const expectedAnnual = prop.expected_rent * 12;
+      const gav = Math.max(prop.actual_rent, expectedAnnual);
+      const propMunicipalTax = Math.min(municipalTaxes * (prop.actual_rent / Object.values(propertyIncome).reduce((sum, p) => sum + p.actual_rent, 0)), municipalTaxes);
+      const nav = gav - propMunicipalTax;
+      const standardDeduction = nav * 0.30;
+      const incomeFromProperty = nav - standardDeduction;
+      
+      return {
+        property_id: prop.property_id,
+        property_name: prop.property_name,
+        expected_rent: prop.expected_rent,
+        expected_annual_rent: expectedAnnual,
+        actual_rent_collected: prop.actual_rent,
+        months_collected: prop.months_collected.size,
+        gross_annual_value: gav,
+        municipal_taxes: propMunicipalTax,
+        net_annual_value: nav,
+        standard_deduction_30: standardDeduction,
+        income_from_property: incomeFromProperty,
+        tenant_details: prop.tenant_details,
+        expenses: propertyExpenses[prop.property_id]?.total || 0
+      };
+    });
+    
+    // Total calculations
+    const totalGAV = propertyTaxDetails.reduce((sum, p) => sum + p.gross_annual_value, 0);
+    const totalNAV = propertyTaxDetails.reduce((sum, p) => sum + p.net_annual_value, 0);
+    const totalStandardDeduction = propertyTaxDetails.reduce((sum, p) => sum + p.standard_deduction_30, 0);
+    const totalHousePropertyIncome = propertyTaxDetails.reduce((sum, p) => sum + p.income_from_property, 0);
+    
+    // Tax Calculation (New Regime)
+    const grossTotalIncome = totalHousePropertyIncome;
+    const taxableIncome = grossTotalIncome;
+    
+    let taxPayable = 0;
+    if (taxableIncome > 300000) {
+      if (taxableIncome <= 600000) {
+        taxPayable = (taxableIncome - 300000) * 0.05;
+      } else if (taxableIncome <= 900000) {
+        taxPayable = 300000 * 0.05 + (taxableIncome - 600000) * 0.10;
+      } else if (taxableIncome <= 1200000) {
+        taxPayable = 300000 * 0.05 + 300000 * 0.10 + (taxableIncome - 900000) * 0.15;
+      } else if (taxableIncome <= 1500000) {
+        taxPayable = 300000 * 0.05 + 300000 * 0.10 + 300000 * 0.15 + (taxableIncome - 1200000) * 0.20;
+      } else {
+        taxPayable = 300000 * 0.05 + 300000 * 0.10 + 300000 * 0.15 + 300000 * 0.20 + (taxableIncome - 1500000) * 0.30;
+      }
+    }
+    
+    // Rebate under Section 87A (for income up to ₹7,00,000)
+    let rebate87A = 0;
+    if (taxableIncome <= 700000 && taxPayable > 0) {
+      rebate87A = Math.min(taxPayable, 25000);
+    }
+    
+    const taxAfterRebate = taxPayable - rebate87A;
+    const cess = taxAfterRebate * 0.04;
+    const totalTaxLiability = taxAfterRebate + cess;
+    
+    // Get TDS deposited
+    const [tdsDeposited] = await pool.query(`
+      SELECT COALESCE(SUM(tds_amount), 0) as total_tds
+      FROM tds_deposits
+      WHERE deposit_date >= ? AND deposit_date <= ?
+    `, [fyStart, fyEnd]);
+    
+    const tdsCredit = parseFloat(tdsDeposited[0].total_tds) || 0;
+    const taxRefund = Math.max(0, tdsCredit - totalTaxLiability);
+    const taxPayableAfterTDS = Math.max(0, totalTaxLiability - tdsCredit);
+    
+    res.json({
+      assessment_year: assessmentYear,
+      financial_year: financialYear,
+      tax_regime: 'new',
+      
+      property_breakdown: propertyTaxDetails,
+      
+      summary: {
+        total_gross_annual_value: totalGAV,
+        total_municipal_taxes: parseFloat(municipalTaxes),
+        total_net_annual_value: totalNAV,
+        total_standard_deduction: totalStandardDeduction,
+        house_property_income: totalHousePropertyIncome,
+        gross_total_income: grossTotalIncome,
+        taxable_income: taxableIncome
+      },
+      
+      tax_calculation: {
+        tax_before_rebate: taxPayable,
+        rebate_87a: rebate87A,
+        tax_after_rebate: taxAfterRebate,
+        cess_4_percent: cess,
+        total_tax_liability: totalTaxLiability,
+        tds_credit: tdsCredit,
+        tax_payable: taxPayableAfterTDS,
+        tax_refund: taxRefund
+      },
+      
+      tax_slabs_applied: [
+        { slab: '0 - 3,00,000', rate: '0%', amount: Math.min(taxableIncome, 300000), tax: 0 },
+        { slab: '3,00,001 - 6,00,000', rate: '5%', amount: Math.max(0, Math.min(taxableIncome, 600000) - 300000), tax: Math.max(0, Math.min(taxableIncome - 300000, 300000)) * 0.05 },
+        { slab: '6,00,001 - 9,00,000', rate: '10%', amount: Math.max(0, Math.min(taxableIncome, 900000) - 600000), tax: Math.max(0, Math.min(taxableIncome - 600000, 300000)) * 0.10 },
+        { slab: '9,00,001 - 12,00,000', rate: '15%', amount: Math.max(0, Math.min(taxableIncome, 1200000) - 900000), tax: Math.max(0, Math.min(taxableIncome - 900000, 300000)) * 0.15 },
+        { slab: '12,00,001 - 15,00,000', rate: '20%', amount: Math.max(0, Math.min(taxableIncome, 1500000) - 1200000), tax: Math.max(0, Math.min(taxableIncome - 1200000, 300000)) * 0.20 },
+        { slab: 'Above 15,00,000', rate: '30%', amount: Math.max(0, taxableIncome - 1500000), tax: Math.max(0, taxableIncome - 1500000) * 0.30 }
+      ].filter(s => s.amount > 0)
+    });
+    
+  } catch (err) {
+    console.error('[TAX] Error calculating tax:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Save tax filing
+app.post('/api/tax/filing', async (req, res) => {
+  const {
+    assessment_year,
+    financial_year = '2024-25',
+    filing_type = 'ITR-2',
+    tax_regime = 'new',
+    salary_income = 0,
+    house_property_income = 0,
+    other_income = 0,
+    municipal_taxes_paid = 0,
+    standard_deduction = 0,
+    deduction_80c = 0,
+    deduction_80d = 0,
+    taxable_income = 0,
+    tax_payable = 0,
+    cess_amount = 0,
+    total_tax_liability = 0,
+    tds_credit = 0,
+    property_details = null
+  } = req.body;
+  
+  try {
+    const [result] = await pool.query(`
+      INSERT INTO tax_filings (
+        assessment_year, financial_year, filing_type, tax_regime,
+        salary_income, house_property_income, other_income,
+        gross_total_income, municipal_taxes_paid, standard_deduction,
+        deduction_80c, deduction_80d, taxable_income,
+        tax_payable, cess_amount, total_tax_liability, tds_credit,
+        property_details, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
+      ON DUPLICATE KEY UPDATE
+        salary_income = VALUES(salary_income),
+        house_property_income = VALUES(house_property_income),
+        other_income = VALUES(other_income),
+        gross_total_income = VALUES(gross_total_income),
+        municipal_taxes_paid = VALUES(municipal_taxes_paid),
+        standard_deduction = VALUES(standard_deduction),
+        deduction_80c = VALUES(deduction_80c),
+        deduction_80d = VALUES(deduction_80d),
+        taxable_income = VALUES(taxable_income),
+        tax_payable = VALUES(tax_payable),
+        cess_amount = VALUES(cess_amount),
+        total_tax_liability = VALUES(total_tax_liability),
+        tds_credit = VALUES(tds_credit),
+        property_details = VALUES(property_details),
+        updated_at = CURRENT_TIMESTAMP
+    `, [
+      assessment_year, financial_year, filing_type, tax_regime,
+      salary_income, house_property_income, other_income,
+      salary_income + house_property_income + other_income,
+      municipal_taxes_paid, standard_deduction,
+      deduction_80c, deduction_80d, taxable_income,
+      tax_payable, cess_amount, total_tax_liability, tds_credit,
+      property_details ? JSON.stringify(property_details) : null
+    ]);
+    
+    res.json({ 
+      id: result.insertId || result.affectedRows,
+      message: 'Tax filing saved successfully',
+      assessment_year,
+      status: 'draft'
+    });
+  } catch (err) {
+    console.error('[TAX] Error saving tax filing:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get tax filings list
+app.get('/api/tax/filings', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT 
+        id,
+        assessment_year,
+        financial_year,
+        filing_type,
+        tax_regime,
+        gross_total_income,
+        taxable_income,
+        total_tax_liability,
+        tds_credit,
+        tax_refund,
+        status,
+        filed_date,
+        created_at
+      FROM tax_filings
+      ORDER BY assessment_year DESC, created_at DESC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get specific tax filing
+app.get('/api/tax/filing/:id', async (req, res) => {
+  try {
+    const [filing] = await pool.query('SELECT * FROM tax_filings WHERE id = ?', [req.params.id]);
+    if (filing.length === 0) {
+      return res.status(404).json({ error: 'Tax filing not found' });
+    }
+    
+    const [properties] = await pool.query(`
+      SELECT tfp.*, p.name as property_name, p.address as property_address
+      FROM tax_filing_properties tfp
+      JOIN properties p ON tfp.property_id = p.id
+      WHERE tfp.tax_filing_id = ?
+    `, [req.params.id]);
+    
+    res.json({
+      ...filing[0],
+      property_details: properties
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── RENT RECEIPTS ──────────────────────────────────────────────────────────
+
+// Generate receipt for a collection
+app.post('/api/receipts/generate', async (req, res) => {
+  const { collection_id, receipt_date = new Date() } = req.body;
+  
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    // Get collection details
+    const [collection] = await connection.query(`
+      SELECT c.*, t.name as tenant_name, t.email as tenant_email, t.phone as tenant_phone,
+             p.name as property_name, p.address as property_address
+      FROM collections c
+      JOIN tenants t ON c.tenant_id = t.id
+      JOIN properties p ON c.property_id = p.id
+      WHERE c.id = ?
+    `, [collection_id]);
+    
+    if (collection.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Collection not found' });
+    }
+    
+    const col = collection[0];
+    
+    // Generate receipt number
+    const receiptNumber = `RCPT-${Date.now()}-${col.tenant_id}`;
+    
+    // Calculate amounts
+    const rentAmount = col.category === 'rent' ? col.amount : 0;
+    const maintenanceAmount = col.category === 'maintenance' ? col.amount : 0;
+    const utilityAmount = col.category === 'utilities' ? col.amount : 0;
+    
+    // Create receipt
+    const [receiptResult] = await connection.query(`
+      INSERT INTO receipts (
+        receipt_number, tenant_id, property_id, collection_id,
+        receipt_date, month_year, rent_amount, maintenance_amount, utility_amount, total_amount,
+        payment_method, payment_date, reference_number, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'generated')
+    `, [
+      receiptNumber, col.tenant_id, col.property_id, collection_id,
+      receipt_date, col.month_year, rentAmount, maintenanceAmount, utilityAmount, col.amount,
+      col.payment_method, col.payment_date, col.reference_number
+    ]);
+    
+    const receiptId = receiptResult.insertId;
+    
+    // Update collection with receipt_id
+    await connection.query('UPDATE collections SET receipt_id = ? WHERE id = ?', [receiptId, collection_id]);
+    
+    // Log receipt generation
+    await connection.query(`
+      INSERT INTO receipts_history (receipt_id, action, details)
+      VALUES (?, 'generated', ?)
+    `, [receiptId, `Receipt generated for collection #${collection_id}`]);
+    
+    await connection.commit();
+    
+    res.json({
+      id: receiptId,
+      receipt_number: receiptNumber,
+      message: 'Receipt generated successfully',
+      receipt: {
+        id: receiptId,
+        receipt_number: receiptNumber,
+        tenant_name: col.tenant_name,
+        property_name: col.property_name,
+        property_address: col.property_address,
+        month_year: col.month_year,
+        rent_amount: rentAmount,
+        maintenance_amount: maintenanceAmount,
+        utility_amount: utilityAmount,
+        total_amount: col.amount,
+        payment_method: col.payment_method,
+        payment_date: col.payment_date,
+        reference_number: col.reference_number,
+        receipt_date: receipt_date
+      }
+    });
+  } catch (err) {
+    await connection.rollback();
+    console.error('[RECEIPT] Error generating receipt:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// Get all receipts
+app.get('/api/receipts', async (req, res) => {
+  const { tenant_id, month_year, status, limit = 1000, offset = 0 } = req.query;
+  
+  try {
+    // Convert YYYY-MM format to "Month Year" format if needed
+    let monthYearFilter = month_year;
+    if (month_year && month_year.includes('-')) {
+      const [year, month] = month_year.split('-');
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      const monthName = monthNames[parseInt(month) - 1];
+      if (monthName) {
+        monthYearFilter = `${monthName} ${year}`;
+      }
+    }
+    
+    let query = `
+      SELECT 
+        r.id,
+        r.receipt_number,
+        r.receipt_date,
+        r.month_year,
+        r.rent_amount,
+        r.maintenance_amount,
+        r.utility_amount,
+        r.total_amount,
+        r.status,
+        r.payment_method,
+        r.payment_date,
+        r.tenant_id,
+        r.property_id,
+        t.name as tenant_name,
+        p.name as property_name
+      FROM receipts r
+      JOIN tenants t ON r.tenant_id = t.id
+      JOIN properties p ON r.property_id = p.id
+      WHERE 1=1
+    `;
+    const params = [];
+    
+    if (tenant_id) {
+      query += ' AND r.tenant_id = ?';
+      params.push(tenant_id);
+    }
+    if (monthYearFilter) {
+      query += ' AND r.month_year = ?';
+      params.push(monthYearFilter);
+    }
+    if (status) {
+      query += ' AND r.status = ?';
+      params.push(status);
+    }
+    
+    query += ' ORDER BY r.receipt_date DESC LIMIT ? OFFSET ?';
+    params.push(parseInt(limit), parseInt(offset));
+    
+    const [rows] = await pool.query(query, params);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get receipt details
+app.get('/api/receipts/:id', async (req, res) => {
+  try {
+    const [receipt] = await pool.query(`
+      SELECT 
+        r.*,
+        t.name as tenant_name,
+        t.email as tenant_email,
+        t.phone as tenant_phone,
+        t.pan_number as tenant_pan,
+        p.name as property_name,
+        p.address as property_address,
+        p.monthly_rent as property_monthly_rent
+      FROM receipts r
+      JOIN tenants t ON r.tenant_id = t.id
+      JOIN properties p ON r.property_id = p.id
+      WHERE r.id = ?
+    `, [req.params.id]);
+    
+    if (receipt.length === 0) {
+      return res.status(404).json({ error: 'Receipt not found' });
+    }
+    
+    const [history] = await pool.query(`
+      SELECT * FROM receipts_history WHERE receipt_id = ? ORDER BY action_date DESC
+    `, [req.params.id]);
+    
+    res.json({
+      ...receipt[0],
+      history
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update receipt status (sent, viewed, downloaded)
+app.put('/api/receipts/:id/status', async (req, res) => {
+  const { status, action_by = 'system' } = req.body;
+  
+  try {
+    await pool.query('UPDATE receipts SET status = ? WHERE id = ?', [status, req.params.id]);
+    
+    await pool.query(`
+      INSERT INTO receipts_history (receipt_id, action, action_by, details)
+      VALUES (?, ?, ?, ?)
+    `, [req.params.id, status, action_by, `Receipt status updated to ${status}`]);
+    
+    res.json({ message: 'Receipt status updated successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete receipt
+app.delete('/api/receipts/:id', async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    // Get receipt info to clear collection link
+    const [receipt] = await connection.query('SELECT collection_id FROM receipts WHERE id = ?', [req.params.id]);
+    
+    if (receipt.length > 0 && receipt[0].collection_id) {
+      // Clear receipt_id from collection
+      await connection.query('UPDATE collections SET receipt_id = NULL WHERE id = ?', [receipt[0].collection_id]);
+    }
+    
+    // Delete receipt history first (foreign key constraint)
+    await connection.query('DELETE FROM receipts_history WHERE receipt_id = ?', [req.params.id]);
+    
+    // Delete receipt
+    await connection.query('DELETE FROM receipts WHERE id = ?', [req.params.id]);
+    
+    await connection.commit();
+    res.json({ message: 'Receipt deleted successfully' });
+  } catch (err) {
+    await connection.rollback();
+    res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// Generate receipts for all collections in a month
+app.post('/api/receipts/generate-bulk', async (req, res) => {
+  const { month_year, property_id, tenant_ids } = req.body;
+  
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    // Convert YYYY-MM format to "Month Year" format for matching
+    let monthYearFilter = month_year;
+    if (month_year && month_year.includes('-')) {
+      const [year, month] = month_year.split('-');
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      const monthName = monthNames[parseInt(month) - 1];
+      if (monthName) {
+        monthYearFilter = `${monthName} ${year}`;
+      }
+    }
+    
+    // Find all paid collections without receipts for the given month
+    let query = `
+      SELECT c.*, t.name as tenant_name, t.email as tenant_email, p.name as property_name, p.address as property_address
+      FROM collections c
+      JOIN tenants t ON c.tenant_id = t.id
+      JOIN properties p ON c.property_id = p.id
+      WHERE c.status = 'paid' AND c.month_year = ? AND (c.receipt_id IS NULL OR c.receipt_id = 0)
+    `;
+    const params = [monthYearFilter];
+    
+    if (property_id) {
+      query += ' AND c.property_id = ?';
+      params.push(property_id);
+    }
+    
+    // Filter by specific tenants if provided
+    if (tenant_ids && Array.isArray(tenant_ids) && tenant_ids.length > 0) {
+      query += ` AND c.tenant_id IN (${tenant_ids.map(() => '?').join(',')})`;
+      params.push(...tenant_ids);
+    }
+    
+    const [collections] = await connection.query(query, params);
+    
+    // If no collections found for the specific month, try matching by payment_date month
+    let finalCollections = collections;
+    if (collections.length === 0 && month_year && month_year.includes('-')) {
+      const [year, month] = month_year.split('-');
+      const dateQuery = `
+        SELECT c.*, t.name as tenant_name, t.email as tenant_email, p.name as property_name, p.address as property_address
+        FROM collections c
+        JOIN tenants t ON c.tenant_id = t.id
+        JOIN properties p ON c.property_id = p.id
+        WHERE c.status = 'paid' 
+          AND YEAR(c.payment_date) = ? 
+          AND MONTH(c.payment_date) = ?
+          AND (c.receipt_id IS NULL OR c.receipt_id = 0)
+        ${property_id ? ' AND c.property_id = ?' : ''}
+        ${tenant_ids && tenant_ids.length > 0 ? ` AND c.tenant_id IN (${tenant_ids.map(() => '?').join(',')})` : ''}
+      `;
+      let dateParams = property_id ? [year, month, property_id] : [year, month];
+      if (tenant_ids && tenant_ids.length > 0) {
+        dateParams = dateParams.concat(tenant_ids);
+      }
+      const [dateCollections] = await connection.query(dateQuery, dateParams);
+      finalCollections = dateCollections;
+    }
+    
+    const generatedReceipts = [];
+    const errors = [];
+    
+    for (const col of finalCollections) {
+      try {
+        const receiptNumber = `RCPT-${Date.now()}-${col.tenant_id}-${col.id}`;
+        
+        const [result] = await connection.query(`
+          INSERT INTO receipts (
+            receipt_number, tenant_id, property_id, collection_id,
+            receipt_date, month_year, rent_amount, total_amount,
+            payment_method, payment_date, reference_number, status
+          ) VALUES (?, ?, ?, ?, CURRENT_DATE, ?, ?, ?, ?, ?, ?, 'generated')
+        `, [
+          receiptNumber, col.tenant_id, col.property_id, col.id,
+          col.month_year, col.category === 'rent' ? col.amount : 0, col.amount,
+          col.payment_method, col.payment_date, col.reference_number
+        ]);
+        
+        await connection.query('UPDATE collections SET receipt_id = ? WHERE id = ?', [result.insertId, col.id]);
+        
+        generatedReceipts.push({
+          id: result.insertId,
+          receipt_number: receiptNumber,
+          tenant_name: col.tenant_name,
+          amount: col.amount
+        });
+      } catch (err) {
+        errors.push({ collection_id: col.id, error: err.message });
+      }
+    }
+    
+    await connection.commit();
+    
+    res.json({
+      message: `Generated ${generatedReceipts.length} receipts for ${month_year}`,
+      generated: generatedReceipts,
+      errors: errors,
+      total_processed: finalCollections.length
+    });
+  } catch (err) {
+    await connection.rollback();
+    res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// Auto-generate receipt for a single collection when paid
+async function autoGenerateReceipt(connection, collection) {
+  try {
+    // Check if receipt already exists
+    if (collection.receipt_id && collection.receipt_id > 0) {
+      return null;
+    }
+    
+    // Only generate receipts for rent payments (not for maintenance/advance)
+    if (collection.category !== 'rent') {
+      return null;
+    }
+    
+    // Get tenant and property details
+    const [[tenant]] = await connection.query('SELECT name, email FROM tenants WHERE id = ?', [collection.tenant_id]);
+    const [[property]] = await connection.query('SELECT name, address FROM properties WHERE id = ?', [collection.property_id]);
+    
+    if (!tenant || !property) {
+      return null;
+    }
+    
+    const receiptNumber = `RCPT-${Date.now()}-${collection.tenant_id}-${collection.id}`;
+    
+    const [result] = await connection.query(`
+      INSERT INTO receipts (
+        receipt_number, tenant_id, property_id, collection_id,
+        receipt_date, month_year, rent_amount, total_amount,
+        payment_method, payment_date, reference_number, status
+      ) VALUES (?, ?, ?, ?, CURRENT_DATE, ?, ?, ?, ?, ?, ?, 'auto')
+    `, [
+      receiptNumber, collection.tenant_id, collection.property_id, collection.id,
+      collection.month_year, collection.amount, collection.amount,
+      collection.payment_method, collection.payment_date, collection.reference_number
+    ]);
+    
+    await connection.query('UPDATE collections SET receipt_id = ? WHERE id = ?', [result.insertId, collection.id]);
+    
+    return {
+      id: result.insertId,
+      receipt_number: receiptNumber,
+      tenant_name: tenant.name,
+      amount: collection.amount
+    };
+  } catch (err) {
+    console.error('Auto-receipt generation failed:', err.message);
+    return null;
+  }
+}
+
+// Updated TDS Report with Income Tax Summary
+app.get('/api/tds-report-detailed', async (req, res) => {
+  const { fy_year = '2024-25' } = req.query;
+  
+  try {
+    // Get TDS details by tenant (all tenants, not just TDS applicable)
+    const [tdsDetails] = await pool.query(`
+      SELECT 
+        t.id as tenant_id,
+        t.name as tenant_name,
+        t.pan_number,
+        t.monthly_rent,
+        t.tds_applicable,
+        t.tds_rate,
+        p.name as property_name,
+        COALESCE(COUNT(td.id), 0) as deposits_count,
+        COALESCE(SUM(CASE WHEN td.status = 'pending' THEN td.tds_amount ELSE 0 END), 0) as pending_tds,
+        COALESCE(SUM(CASE WHEN td.status = 'deposited' THEN td.tds_amount ELSE 0 END), 0) as deposited_tds,
+        COALESCE(SUM(td.tds_amount), 0) as total_tds_liability
+      FROM tenants t
+      LEFT JOIN properties p ON t.property_id = p.id
+      LEFT JOIN tds_deposits td ON t.id = td.tenant_id
+      GROUP BY t.id, t.name, t.pan_number, t.monthly_rent, t.tds_applicable, t.tds_rate, p.name
+      ORDER BY t.name
+    `);
+    
+    // Get monthly TDS breakdown
+    const [monthlyBreakdown] = await pool.query(`
+      SELECT 
+        td.month_year,
+        SUM(td.tds_amount) as total_tds,
+        COUNT(*) as tenant_count
+      FROM tds_deposits td
+      WHERE td.status = 'deposited'
+      GROUP BY td.month_year
+      ORDER BY td.month_year
+    `);
+    
+    // Get total TDS deposited for FY
+    const [fyTotal] = await pool.query(`
+      SELECT 
+        SUM(tds_amount) as total_deposited,
+        COUNT(DISTINCT tenant_id) as tenants_count,
+        COUNT(*) as transactions_count
+      FROM tds_deposits
+      WHERE status = 'deposited'
+        AND deposit_date >= ? AND deposit_date <= ?
+    `, [`${fy_year.split('-')[0]}-04-01`, `20${fy_year.split('-')[1]}-03-31`]);
+    
+    res.json({
+      financial_year: fy_year,
+      summary: {
+        total_tds_deposited: fyTotal[0].total_deposited || 0,
+        tenants_count: fyTotal[0].tenants_count || 0,
+        transactions_count: fyTotal[0].transactions_count || 0
+      },
+      tenant_wise_details: tdsDetails,
+      monthly_breakdown: monthlyBreakdown
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Migration: Link existing receipts to collections
+app.post('/api/migrate/link-receipts', async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    // Find receipts that aren't linked to collections
+    const [unlinkedReceipts] = await connection.query(`
+      SELECT r.id as receipt_id, r.tenant_id, r.month_year, r.collection_id
+      FROM receipts r
+      WHERE r.collection_id IS NULL
+    `);
+    
+    let linked = 0;
+    let errors = [];
+    
+    for (const receipt of unlinkedReceipts) {
+      try {
+        // Find matching collection by tenant + month
+        const [collections] = await connection.query(`
+          SELECT c.id 
+          FROM collections c
+          WHERE c.tenant_id = ? 
+            AND c.month_year = ?
+            AND (c.receipt_id IS NULL OR c.receipt_id = 0)
+          LIMIT 1
+        `, [receipt.tenant_id, receipt.month_year]);
+        
+        if (collections.length > 0) {
+          const collectionId = collections[0].id;
+          
+          // Link receipt to collection
+          await connection.query(`
+            UPDATE receipts SET collection_id = ? WHERE id = ?
+          `, [collectionId, receipt.receipt_id]);
+          
+          // Link collection to receipt
+          await connection.query(`
+            UPDATE collections SET receipt_id = ? WHERE id = ?
+          `, [receipt.receipt_id, collectionId]);
+          
+          linked++;
+        }
+      } catch (err) {
+        errors.push({ receipt_id: receipt.receipt_id, error: err.message });
+      }
+    }
+    
+    await connection.commit();
+    
+    res.json({
+      message: `Linked ${linked} receipts to collections`,
+      total_unlinked: unlinkedReceipts.length,
+      linked,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (err) {
+    await connection.rollback();
+    res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
 });
 
 // Before exit backup (fallback)
