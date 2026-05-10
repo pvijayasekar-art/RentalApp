@@ -121,8 +121,8 @@ app.post('/api/properties', async (req, res) => {
   const { name, address, type, total_units, monthly_rent, status } = req.body;
   try {
     const [result] = await pool.query(
-      'INSERT INTO properties (name,address,type,total_units,monthly_rent,status,eb_service_number,property_assessment_number,water_connection_number) VALUES (?,?,?,?,?,?,?,?,?)',
-      [name, address, type, total_units, monthly_rent, status || 'active', req.body.eb_service_number || null, req.body.property_assessment_number || null, req.body.water_connection_number || null]
+      'INSERT INTO properties (name,address,type,total_units,monthly_rent,status,eb_service_number,property_assessment_number,water_connection_number,patta_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [name, address, type, total_units, monthly_rent, status || 'active', req.body.eb_service_number || null, req.body.property_assessment_number || null, req.body.water_connection_number || null, req.body.patta_number || null]
     );
     res.json({ id: result.insertId, message: 'Property added successfully' });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -132,8 +132,8 @@ app.put('/api/properties/:id', async (req, res) => {
   const { name, address, type, total_units, monthly_rent, status } = req.body;
   try {
     await pool.query(
-      'UPDATE properties SET name=?,address=?,type=?,total_units=?,monthly_rent=?,status=?,eb_service_number=?,property_assessment_number=?,water_connection_number=? WHERE id=?',
-      [name, address, type, total_units, monthly_rent, status, req.body.eb_service_number || null, req.body.property_assessment_number || null, req.body.water_connection_number || null, req.params.id]
+      'UPDATE properties SET name=?,address=?,type=?,total_units=?,monthly_rent=?,status=?,eb_service_number=?,property_assessment_number=?,water_connection_number=?,patta_number=? WHERE id=?',
+      [name, address, type, total_units, monthly_rent, status, req.body.eb_service_number || null, req.body.property_assessment_number || null, req.body.water_connection_number || null, req.body.patta_number || null, req.params.id]
     );
     res.json({ message: 'Property updated successfully' });
   } catch (err) { res.status(500).json({ error: err.message }); }

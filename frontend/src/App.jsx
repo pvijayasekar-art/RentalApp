@@ -317,12 +317,12 @@ function Dashboard() {
 function Properties() {
   const [items, setItems] = useState([]);
   const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({ name:"",address:"",type:"apartment",total_units:1,monthly_rent:"",status:"active",eb_service_number:"",property_assessment_number:"",water_connection_number:"" });
+  const [form, setForm] = useState({ name:"",address:"",type:"apartment",total_units:1,monthly_rent:"",status:"active",eb_service_number:"",property_assessment_number:"",water_connection_number:"",patta_number:"" });
   const load = useCallback(() => api("/properties").then(setItems), []);
   useEffect(() => { load(); }, [load]);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const open = (item) => {
-    if (item) setForm({ ...item }); else setForm({ name:"",address:"",type:"apartment",total_units:1,monthly_rent:"",status:"active" });
+    if (item) setForm({ ...item }); else setForm({ name:"",address:"",type:"apartment",total_units:1,monthly_rent:"",status:"active",eb_service_number:"",property_assessment_number:"",water_connection_number:"",patta_number:"" });
     setModal(item || true);
   };
   const save = async () => {
@@ -367,8 +367,13 @@ function Properties() {
               </div>
             )}
             {p.water_connection_number && (
-              <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"8px"}}>
+              <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"4px"}}>
                 <strong>Water Connection:</strong> {p.water_connection_number}
+              </div>
+            )}
+            {p.patta_number && (
+              <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"8px"}}>
+                <strong>Patta:</strong> {p.patta_number}
               </div>
             )}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"12px",padding:"12px",background:"var(--bg)",borderRadius:"10px"}}>
@@ -398,6 +403,7 @@ function Properties() {
             <Field label="EB Service Number (Optional)"><Input value={form.eb_service_number} onChange={e => set("eb_service_number",e.target.value)} placeholder="EB Service Number"/></Field>
             <Field label="Property Assessment Number (Optional)"><Input value={form.property_assessment_number} onChange={e => set("property_assessment_number",e.target.value)} placeholder="Property Assessment Number"/></Field>
             <Field label="Water Connection Number (Optional)"><Input value={form.water_connection_number} onChange={e => set("water_connection_number",e.target.value)} placeholder="Water Connection Number"/></Field>
+            <Field label="Patta Number (Optional)"><Input value={form.patta_number} onChange={e => set("patta_number",e.target.value)} placeholder="Patta Number"/></Field>
             <Field label="Status"><Select value={form.status} onChange={e => set("status",e.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option><option value="maintenance">Maintenance</option></Select></Field>
           </div>
           <div style={{display:"flex",gap:"10px",justifyContent:"flex-end",marginTop:"8px"}}>
@@ -903,6 +909,14 @@ function Collections() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [filter, setFilter] = useState("all");
   const [extracting, setExtracting] = useState(false);
+  
+  // Advanced filter states
+  const [selectedTenant, setSelectedTenant] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState('');
+  const [searchReceipt, setSearchReceipt] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState('');
+  const [selectedFinancialYear, setSelectedFinancialYear] = useState('');
+  const [selectedProperty, setSelectedProperty] = useState('');
   const blank = { tenant_id:"",property_id:"",amount:"",payment_date:new Date().toISOString().slice(0,10),payment_method:"upi",category:"rent",month_year:getCurrentMonthYear(),status:"paid",notes:"",reference_number:"" };
   const [form, setForm] = useState(blank);
   const [paymentFile, setPaymentFile] = useState(null);
@@ -971,7 +985,89 @@ function Collections() {
     }
   };
   const del = async (id) => { if (confirm("Delete this record?")) { await api(`/collections/${id}`, "DELETE"); load(); } };
-  const filtered = filter === "all" ? items : items.filter(i => i.status === filter);
+  // Helper functions for filtering
+  const getCurrentFinancialYear = () => {
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1;
+    return currentMonth >= 4 ? `${currentYear}-${currentYear + 1}` : `${currentYear - 1}-${currentYear}`;
+  };
+
+  const getFinancialYear = (date) => {
+    const d = new Date(date);
+    const year = d.getFullYear();
+    const month = d.getMonth() + 1; // JavaScript months are 0-indexed
+    // Financial year runs from April to March
+    return month >= 4 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
+  };
+
+  const getFinancialYearOptions = () => {
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1;
+    
+    const options = [];
+    // Generate options for current year and 4 previous years
+    for (let i = 0; i < 5; i++) {
+      const year = currentYear - i;
+      const fy = currentMonth >= 4 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
+      options.push(fy);
+    }
+    return options;
+  };
+
+  const getMonthOptions = () => {
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    return months.map((month, index) => ({
+      value: String(index + 1).padStart(2, '0'),
+      label: month
+    }));
+  };
+
+  // Advanced filtering logic
+  const filteredItems = items.filter(item => {
+    // Original filter logic
+    if (filter !== "all" && item.status !== filter) {
+      return false;
+    }
+    
+    // Tenant filter
+    if (selectedTenant && item.tenant_id !== selectedTenant && item.tenant_id !== parseInt(selectedTenant)) {
+      return false;
+    }
+    
+    // Status filter
+    if (selectedStatus && item.status !== selectedStatus) {
+      return false;
+    }
+    
+    // Receipt search filter
+    if (searchReceipt && !item.reference_number.toLowerCase().includes(searchReceipt.toLowerCase())) {
+      return false;
+    }
+    
+    // Month filter
+    if (selectedMonth) {
+      const paymentMonth = new Date(item.payment_date).getMonth() + 1;
+      if (paymentMonth !== parseInt(selectedMonth)) {
+        return false;
+      }
+    }
+    
+    // Financial year filter
+    if (selectedFinancialYear && getFinancialYear(item.payment_date) !== selectedFinancialYear) {
+      return false;
+    }
+    
+    // Property filter
+    if (selectedProperty && item.property_id !== selectedProperty && item.property_id !== parseInt(selectedProperty)) {
+      return false;
+    }
+    
+    return true;
+  });
+
+  const filtered = filter === "all" && !selectedTenant && !selectedStatus && !searchReceipt && !selectedMonth && !selectedFinancialYear && !selectedProperty 
+    ? items 
+    : filteredItems;
   const total = filtered.reduce((s, i) => s + parseFloat(i.amount||0), 0);
   
   const collectionCats = { rent: "#22c55e", utilities: "#3b82f6", advance: "#f59e0b", maintenance: "#8b5cf6", deposit: "#ec4899", other: "#94a3b8" };
@@ -1066,6 +1162,125 @@ function Collections() {
           </button>
         ))}
       </div>
+      
+      {/* Advanced Filter Section */}
+      <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"16px",padding:"20px",marginBottom:"20px"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:"16px",marginBottom:"16px"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+            <label style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Tenant:</label>
+            <select 
+              value={selectedTenant} 
+              onChange={e => setSelectedTenant(e.target.value)}
+              style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"8px",background:"var(--bg)",color:"var(--text)",fontSize:"14px",cursor:"pointer"}}
+            >
+              <option value="">All Tenants</option>
+              {tenants && tenants.length > 0 ? tenants.map(t => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              )) : (
+                <option value="" disabled>Loading tenants...</option>
+              )}
+            </select>
+          </div>
+          
+          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+            <label style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Status:</label>
+            <select 
+              value={selectedStatus} 
+              onChange={e => setSelectedStatus(e.target.value)}
+              style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"8px",background:"var(--bg)",color:"var(--text)",fontSize:"14px",cursor:"pointer"}}
+            >
+              <option value="">All Statuses</option>
+              <option value="paid">Paid</option>
+              <option value="pending">Pending</option>
+              <option value="partial">Partial</option>
+              <option value="overdue">Overdue</option>
+            </select>
+          </div>
+          
+          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+            <label style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Property:</label>
+            <select 
+              value={selectedProperty} 
+              onChange={e => setSelectedProperty(e.target.value)}
+              style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"8px",background:"var(--bg)",color:"var(--text)",fontSize:"14px",cursor:"pointer"}}
+            >
+              <option value="">All Properties</option>
+              {properties && properties.length > 0 ? properties.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              )) : (
+                <option value="" disabled>Loading properties...</option>
+              )}
+            </select>
+          </div>
+          
+          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+            <label style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Month:</label>
+            <select 
+              value={selectedMonth} 
+              onChange={e => setSelectedMonth(e.target.value)}
+              style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"8px",background:"var(--bg)",color:"var(--text)",fontSize:"14px",cursor:"pointer"}}
+            >
+              <option value="">All Months</option>
+              {getMonthOptions().map(month => (
+                <option key={month.value} value={month.value}>{month.label}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+            <label style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Financial Year:</label>
+            <select 
+              value={selectedFinancialYear} 
+              onChange={e => setSelectedFinancialYear(e.target.value)}
+              style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"8px",background:"var(--bg)",color:"var(--text)",fontSize:"14px",cursor:"pointer"}}
+            >
+              <option value="">All Years</option>
+              {getFinancialYearOptions().map(fy => (
+                <option key={fy} value={fy}>{fy}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        
+        <div style={{display:"flex",flexDirection:"column",gap:"8px",marginBottom:"16px"}}>
+          <label style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Search Receipt Number:</label>
+          <input 
+            type="text"
+            value={searchReceipt}
+            onChange={e => setSearchReceipt(e.target.value)}
+            placeholder="Search in receipt numbers..."
+            style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"8px",background:"var(--bg)",color:"var(--text)",fontSize:"14px"}}
+          />
+        </div>
+        
+        <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+          <button 
+            onClick={() => {
+              setSelectedTenant('');
+              setSelectedStatus('');
+              setSearchReceipt('');
+              setSelectedMonth('');
+              setSelectedFinancialYear('');
+              setSelectedProperty('');
+            }}
+            style={{padding:"8px 16px",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"8px",color:"var(--text)",cursor:"pointer",fontSize:"14px",fontWeight:500}}
+          >
+            Clear All Filters
+          </button>
+        </div>
+        
+        {(selectedTenant || selectedStatus || searchReceipt || selectedMonth || selectedFinancialYear || selectedProperty) && (
+          <div style={{marginTop:"12px",fontSize:"13px",color:"var(--muted)"}}>
+            Active filters: 
+            {selectedTenant && <span style={{marginLeft:"8px"}}>Tenant: {tenants && tenants.find(t => t.id === selectedTenant)?.name || selectedTenant}</span>}
+            {selectedStatus && <span style={{marginLeft:"8px"}}>Status: {selectedStatus}</span>}
+            {selectedProperty && <span style={{marginLeft:"8px"}}>Property: {properties && properties.find(p => p.id === selectedProperty)?.name || selectedProperty}</span>}
+            {selectedMonth && <span style={{marginLeft:"8px"}}>Month: {getMonthOptions().find(m => m.value === selectedMonth)?.label || selectedMonth}</span>}
+            {selectedFinancialYear && <span style={{marginLeft:"8px"}}>FY: {selectedFinancialYear}</span>}
+            {searchReceipt && <span style={{marginLeft:"8px"}}>Receipt: "{searchReceipt}"</span>}
+          </div>
+        )}
+      </div>
       <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"16px",overflow:"hidden"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
           <thead style={{background:"var(--bg)"}}>
@@ -1076,7 +1291,7 @@ function Collections() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(c => {
+            {filteredItems.map(c => {
               const catColor = collectionCats[c.category] || "#94a3b8";
               return (
                 <tr key={c.id} style={{borderBottom:"1px solid var(--border)"}}>
@@ -1130,7 +1345,7 @@ function Collections() {
             })}
           </tbody>
         </table>
-        {!filtered.length && <div style={{padding:"40px",textAlign:"center",color:"var(--muted)"}}>No records found</div>}
+        {!filteredItems.length && <div style={{padding:"40px",textAlign:"center",color:"var(--muted)"}}>No records found</div>}
       </div>
       {modal && (
         <Modal title={modal?.id ? "Edit Collection" : "Record Payment"} onClose={() => setModal(null)}>
@@ -1233,6 +1448,17 @@ function Expenses() {
   const [extractingContent, setExtractingContent] = useState(false);
   const [contentModal, setContentModal] = useState(null);
   const [extractedContent, setExtractedContent] = useState('');
+  const getCurrentFinancialYear = () => {
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1;
+    return currentMonth >= 4 ? `${currentYear}-${currentYear + 1}` : `${currentYear - 1}-${currentYear}`;
+  };
+  
+  const [selectedFinancialYear, setSelectedFinancialYear] = useState(getCurrentFinancialYear());
+  const [selectedCategory, setSelectedCategory] = useState('');
+  const [selectedProperty, setSelectedProperty] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState('');
+  const [searchDescription, setSearchDescription] = useState('');
   const blank = { property_id:"",category:"maintenance",description:"",amount:"",expense_date:new Date().toISOString().slice(0,10),vendor:"",status:"paid",receipt_number:"" };
   const [form, setForm] = useState(blank);
   const [expenseFile, setExpenseFile] = useState(null);
@@ -1285,7 +1511,61 @@ function Expenses() {
       alert('Failed to delete expense: ' + err.message);
     }
   };
-  const total = items.reduce((s, i) => s + parseFloat(i.amount||0), 0);
+  // Financial year helper functions
+  const getFinancialYear = (date) => {
+    const d = new Date(date);
+    const year = d.getFullYear();
+    const month = d.getMonth() + 1; // JavaScript months are 0-indexed
+    // Financial year runs from April to March
+    return month >= 4 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
+  };
+
+  const getFinancialYearOptions = () => {
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1;
+    const currentFY = currentMonth >= 4 ? `${currentYear}-${currentYear + 1}` : `${currentYear - 1}-${currentYear}`;
+    
+    const options = [];
+    // Generate options for current year and 4 previous years
+    for (let i = 0; i < 5; i++) {
+      const year = currentYear - i;
+      const fy = currentMonth >= 4 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
+      options.push(fy);
+    }
+    return options;
+  };
+
+  // Filter items based on all selected filters
+  const filteredItems = items.filter(item => {
+    // Financial year filter
+    if (selectedFinancialYear && getFinancialYear(item.expense_date) !== selectedFinancialYear) {
+      return false;
+    }
+    
+    // Category filter
+    if (selectedCategory && item.category !== selectedCategory) {
+      return false;
+    }
+    
+    // Property filter
+    if (selectedProperty && item.property_id !== selectedProperty && item.property_id !== parseInt(selectedProperty)) {
+      return false;
+    }
+    
+    // Status filter
+    if (selectedStatus && item.status !== selectedStatus) {
+      return false;
+    }
+    
+    // Description search filter
+    if (searchDescription && !item.description.toLowerCase().includes(searchDescription.toLowerCase())) {
+      return false;
+    }
+    
+    return true;
+  });
+
+  const total = filteredItems.reduce((s, i) => s + parseFloat(i.amount||0), 0);
 
   const catColors = { maintenance:"#3b82f6", utilities:"#06b6d4", taxes:"#f59e0b", insurance:"#8b5cf6", repairs:"#ef4444", cleaning:"#22c55e", security:"#f97316", other:"#94a3b8" };
   
@@ -1346,14 +1626,113 @@ function Expenses() {
 
   return (
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"24px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"28px"}}>
         <div>
           <h1 style={{fontSize:"26px",fontWeight:800,color:"var(--text)",margin:0}}>Expenses</h1>
-          <p style={{color:"var(--muted)",margin:"4px 0 0",fontSize:"14px"}}>{items.length} records · Total: {fmt(total)}</p>
+          <p style={{color:"var(--muted)",margin:"4px 0 0",fontSize:"14px"}}>{filteredItems.length} records · Total: {fmt(total)}</p>
         </div>
         <button onClick={() => open(null)} style={{display:"flex",alignItems:"center",gap:"8px",padding:"10px 20px",background:"var(--accent)",color:"#fff",border:"none",borderRadius:"10px",fontWeight:600,cursor:"pointer",fontSize:"14px"}}>
           <Icon name="plus" size={16}/>Add Expense
         </button>
+      </div>
+      
+      {/* Filter Section */}
+      <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"16px",padding:"20px",marginBottom:"20px"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:"16px",marginBottom:"16px"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+            <label style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Financial Year:</label>
+            <select 
+              value={selectedFinancialYear} 
+              onChange={e => setSelectedFinancialYear(e.target.value)}
+              style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"8px",background:"var(--bg)",color:"var(--text)",fontSize:"14px",cursor:"pointer"}}
+            >
+              <option value="">All Years</option>
+              {getFinancialYearOptions().map(fy => (
+                <option key={fy} value={fy}>{fy}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+            <label style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Category:</label>
+            <select 
+              value={selectedCategory} 
+              onChange={e => setSelectedCategory(e.target.value)}
+              style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"8px",background:"var(--bg)",color:"var(--text)",fontSize:"14px",cursor:"pointer"}}
+            >
+              <option value="">All Categories</option>
+              {["maintenance","utilities","taxes","insurance","repairs","cleaning","security","other"].map(cat => (
+                <option key={cat} value={cat} style={{textTransform:"capitalize"}}>{cat.charAt(0).toUpperCase()+cat.slice(1)}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+            <label style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Property:</label>
+            <select 
+              value={selectedProperty} 
+              onChange={e => setSelectedProperty(e.target.value)}
+              style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"8px",background:"var(--bg)",color:"var(--text)",fontSize:"14px",cursor:"pointer"}}
+            >
+              <option value="">All Properties</option>
+              {properties && properties.length > 0 ? properties.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              )) : (
+                <option value="" disabled>Loading properties...</option>
+              )}
+            </select>
+          </div>
+          
+          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+            <label style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Status:</label>
+            <select 
+              value={selectedStatus} 
+              onChange={e => setSelectedStatus(e.target.value)}
+              style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"8px",background:"var(--bg)",color:"var(--text)",fontSize:"14px",cursor:"pointer"}}
+            >
+              <option value="">All Statuses</option>
+              <option value="paid">Paid</option>
+              <option value="pending">Pending</option>
+            </select>
+          </div>
+        </div>
+        
+        <div style={{display:"flex",flexDirection:"column",gap:"8px",marginBottom:"16px"}}>
+          <label style={{fontSize:"14px",fontWeight:600,color:"var(--text)"}}>Search Description:</label>
+          <input 
+            type="text"
+            value={searchDescription}
+            onChange={e => setSearchDescription(e.target.value)}
+            placeholder="Search in expense descriptions..."
+            style={{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:"8px",background:"var(--bg)",color:"var(--text)",fontSize:"14px"}}
+          />
+        </div>
+        
+        <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+          <button 
+            onClick={() => {
+              setSelectedFinancialYear('');
+              setSelectedCategory('');
+              setSelectedProperty('');
+              setSelectedStatus('');
+              setSearchDescription('');
+            }}
+            style={{padding:"8px 16px",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"8px",color:"var(--text)",cursor:"pointer",fontSize:"14px",fontWeight:500}}
+          >
+            Clear All Filters
+          </button>
+        </div>
+        
+        {(selectedFinancialYear || selectedCategory || selectedProperty || selectedStatus || searchDescription) && (
+          <div style={{marginTop:"12px",fontSize:"13px",color:"var(--muted)"}}>
+            Active filters: 
+            {selectedFinancialYear && <span style={{marginLeft:"8px"}}>FY: {selectedFinancialYear}</span>}
+            {selectedCategory && <span style={{marginLeft:"8px"}}>Category: {selectedCategory}</span>}
+            {selectedProperty && <span style={{marginLeft:"8px"}}>Property: {properties && properties.find(p => p.id === selectedProperty)?.name || selectedProperty}</span>}
+            {selectedStatus && <span style={{marginLeft:"8px"}}>Status: {selectedStatus}</span>}
+            {searchDescription && <span style={{marginLeft:"8px"}}>Search: "{searchDescription}"</span>}
+          </div>
+        )}
       </div>
       <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"16px",overflow:"hidden"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
@@ -1365,7 +1744,7 @@ function Expenses() {
             </tr>
           </thead>
           <tbody>
-            {items.map(e => {
+            {filteredItems.map(e => {
               const c = catColors[e.category] || "#94a3b8";
               return (
                 <tr key={e.id} style={{borderBottom:"1px solid var(--border)"}}>
@@ -1391,7 +1770,7 @@ function Expenses() {
             })}
           </tbody>
         </table>
-        {!items.length && <div style={{padding:"40px",textAlign:"center",color:"var(--muted)"}}>No expenses recorded</div>}
+        {!filteredItems.length && <div style={{padding:"40px",textAlign:"center",color:"var(--muted)"}}>No expenses recorded</div>}
       </div>
       
       {/* Add/Edit Expense Modal */}
