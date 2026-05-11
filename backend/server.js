@@ -2298,6 +2298,113 @@ app.get('/api/migrate/ledger/status', async (req, res) => {
   }
 });
 
+// ─── AI RECOMMENDATIONS (Lazy Loaded) ───────────────────────────────────────
+// In-memory cache for AI recommendations (1 day TTL)
+const aiCache = new Map();
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function getCachedAiRecommendations(cacheKey) {
+  const cached = aiCache.get(cacheKey);
+  if (!cached) return null;
+  if (Date.now() - cached.timestamp > CACHE_TTL_MS) {
+    aiCache.delete(cacheKey);
+    return null;
+  }
+  console.log('[AI] Returning cached recommendations');
+  return cached.data;
+}
+
+function setCachedAiRecommendations(cacheKey, data) {
+  aiCache.set(cacheKey, { timestamp: Date.now(), data });
+  console.log('[AI] Cached recommendations for 24 hours');
+}
+
+// Endpoint to clear AI cache (for testing)
+app.post('/api/ai-recommendations/clear-cache', (req, res) => {
+  aiCache.clear();
+  console.log('[AI] Cache cleared');
+  res.json({ message: 'AI recommendations cache cleared' });
+});
+
+app.get('/api/ai-recommendations', async (req, res) => {
+  try {
+    // Check cache first
+    const cacheKey = 'ai_recommendations';
+    const cached = getCachedAiRecommendations(cacheKey);
+    if (cached) {
+      return res.json({
+        loading: false,
+        recommendations: cached.recommendations,
+        analyzedCount: cached.analyzedCount,
+        ollamaConnected: cached.ollamaConnected,
+        cached: true,
+        cachedAt: new Date(aiCache.get(cacheKey).timestamp).toISOString()
+      });
+    }
+
+    const fetch = (await import('node-fetch')).default;
+    const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
+    console.log('[AI] Ollama URL:', ollamaUrl);
+
+    // Get properties with occupancy data
+    const [properties] = await pool.query(`
+      SELECT p.id, p.name, p.type, p.address, p.monthly_rent, p.total_units, COUNT(t.id) as tenant_count
+      FROM properties p
+      LEFT JOIN tenants t ON p.id = t.property_id AND t.status = 'active'
+      GROUP BY p.id, p.name, p.type, p.address, p.monthly_rent, p.total_units
+    `);
+
+    console.log('[AI] Found', properties.length, 'properties');
+
+    // Find properties needing pricing review
+    const propertiesNeedingReview = properties.filter(p => {
+      const occupancyRate = p.total_units > 0 ? (p.tenant_count / p.total_units) * 100 : 0;
+      return occupancyRate < 60 || occupancyRate === 0;
+    }).slice(0, 3);
+
+    console.log('[AI] Properties needing review:', propertiesNeedingReview.length, propertiesNeedingReview.map(p => p.name));
+
+    const aiRecommendations = [];
+
+    for (const prop of propertiesNeedingReview) {
+      const aiRec = await getOllamaRentRecommendation(prop, fetch, ollamaUrl);
+      if (aiRec) {
+        const actionEmoji = aiRec.action === 'increase' ? '📈' : aiRec.action === 'decrease' ? '📉' : '➡️';
+        aiRecommendations.push({
+          type: aiRec.action === 'increase' ? 'success' : aiRec.action === 'decrease' ? 'warning' : 'info',
+          priority: aiRec.confidence === 'high' ? 'high' : 'medium',
+          message: `${actionEmoji} ${prop.name}: AI suggests rent ${aiRec.recommendedRentRange}. ${aiRec.reasoning}`,
+          ai: true,
+          propertyId: prop.id,
+          aiData: aiRec
+        });
+      }
+    }
+
+    const result = {
+      loading: false,
+      recommendations: aiRecommendations,
+      analyzedCount: propertiesNeedingReview.length,
+      ollamaConnected: aiRecommendations.length > 0,
+      cached: false
+    };
+
+    // Cache the result
+    setCachedAiRecommendations(cacheKey, result);
+
+    res.json(result);
+  } catch (err) {
+    console.error('AI recommendations error:', err.message);
+    res.json({
+      loading: false,
+      recommendations: [],
+      error: err.message,
+      ollamaConnected: false,
+      cached: false
+    });
+  }
+});
+
 // ─── PREDICTIONS & FORECASTS ────────────────────────────────────────────────
 app.get('/api/predictions', async (req, res) => {
   try {
@@ -2465,31 +2572,51 @@ app.get('/api/predictions', async (req, res) => {
         }, 0);
       }
       
-      // Use historical expenses for past months, predict for future months
-      const monthlyExpenses = expenseHistory.filter(e => {
-        const expenseMonth = new Date(e.month + '-01').getMonth();
-        return expenseMonth === forecastMonth;
-      });
-      
+      // Use historical expenses for exact month match, predict for future months
+      const monthlyExpenses = expenseHistory.filter(e => e.month === monthKey);
+
       let predictedExpenses;
       if (monthlyExpenses.length > 0) {
-        // Use actual expenses for months that have historical data
+        // Use actual expenses for this specific month/year
         predictedExpenses = monthlyExpenses.reduce((sum, e) => sum + parseFloat(e.total), 0);
       } else {
-        // Predict future expenses based on monthly average
-        const monthlyAverage = expenseHistory.length > 0
-          ? expenseHistory.reduce((sum, e) => sum + parseFloat(e.total), 0) / expenseHistory.length
-          : 0;
-        predictedExpenses = monthlyAverage;
+        // Predict based on same month from historical years (seasonal) or category averages
+        const sameMonthHistory = expenseHistory.filter(e => {
+          const expenseMonth = new Date(e.month + '-01').getMonth();
+          return expenseMonth === forecastMonth;
+        });
+
+        if (sameMonthHistory.length > 0) {
+          // Use seasonal average for this specific month
+          const seasonalAvg = sameMonthHistory.reduce((sum, e) => sum + parseFloat(e.total), 0) / sameMonthHistory.length;
+          predictedExpenses = seasonalAvg;
+        } else if (expenseHistory.length > 0) {
+          // Fallback to overall monthly average
+          const monthsOfData = new Set(expenseHistory.map(e => e.month)).size;
+          const totalExpenses = expenseHistory.reduce((sum, e) => sum + parseFloat(e.total), 0);
+          predictedExpenses = monthsOfData > 0 ? totalExpenses / monthsOfData : 0;
+        } else {
+          predictedExpenses = 0;
+        }
       }
       
+      // Determine confidence based on data availability and amount
+      let confidence;
+      if (monthlyCollections) {
+        confidence = 'high'; // Actual historical data
+      } else if (predictedIncome > 0) {
+        confidence = 'medium'; // Projected based on active tenants
+      } else {
+        confidence = 'low'; // No data available
+      }
+
       forecast.push({
         month: monthNames[forecastMonth],
         year: forecastYear,
         predictedIncome: Math.round(predictedIncome),
         predictedExpenses: Math.round(predictedExpenses),
         predictedNet: Math.round(predictedIncome - predictedExpenses),
-        confidence: predictedIncome > 0 ? 'high' : 'low'
+        confidence
       });
     }
     
@@ -2498,10 +2625,10 @@ app.get('/api/predictions', async (req, res) => {
     
     // Property-level predictions
     const [properties] = await pool.query(`
-      SELECT p.*, COUNT(t.id) as tenant_count
+      SELECT p.id, p.name, p.type, p.address, p.monthly_rent, p.total_units, COUNT(t.id) as tenant_count
       FROM properties p
       LEFT JOIN tenants t ON p.id = t.property_id AND t.status = 'active'
-      GROUP BY p.id
+      GROUP BY p.id, p.name, p.type, p.address, p.monthly_rent, p.total_units
     `);
     
     const propertyPredictions = properties.map(p => {
@@ -2521,22 +2648,44 @@ app.get('/api/predictions', async (req, res) => {
       };
     });
     
-    // Calculate year-end projections using hybrid forecasting data
-    const forecastIncome = forecast.reduce((sum, f) => sum + f.predictedIncome, 0);
-    const forecastExpenses = forecast.reduce((sum, f) => sum + f.predictedExpenses, 0);
-    
+    // Calculate year-end projections - separate YTD actuals from future forecast
+    const currentFYMonth = now.getMonth(); // 0-11 (Jan-Mar = previous FY, Apr-Dec = current FY)
+
+    // Determine which months in forecast are completed (actual) vs current/future (predicted)
+    // Financial year runs April (3) to March (2)
+    // Index 0 = April, Index 1 = May, ... Index 11 = March
+    const currentFYIndex = currentFYMonth >= 3 ? currentFYMonth - 3 : currentFYMonth + 9;
+
+    let ytdIncome = 0;
+    let ytdExpenses = 0;
+    let futureIncome = 0;
+    let futureExpenses = 0;
+
+    forecast.forEach((f, index) => {
+      if (index < currentFYIndex) {
+        // Completed months - actual data only
+        ytdIncome += f.predictedIncome;
+        ytdExpenses += f.predictedExpenses;
+      } else {
+        // Current month (partial) and future months - all predictions
+        futureIncome += f.predictedIncome;
+        futureExpenses += f.predictedExpenses;
+      }
+    });
+
     const yearEndProjections = {
-      projectedTotalIncome: Math.round(forecastIncome),
-      projectedTotalExpenses: Math.round(forecastExpenses),
+      projectedTotalIncome: Math.round(ytdIncome + futureIncome),
+      projectedTotalExpenses: Math.round(ytdExpenses + futureExpenses),
       projectedNetIncome: 0,
       currentYearActuals: {
-        income: monthlyHistory.reduce((sum, m) => sum + parseFloat(m.collected), 0),
-        expenses: expenseHistory.reduce((sum, e) => sum + parseFloat(e.total), 0)
+        income: Math.round(ytdIncome),
+        expenses: Math.round(ytdExpenses)
+      },
+      remainingForecast: {
+        income: Math.round(futureIncome),
+        expenses: Math.round(futureExpenses)
       }
     };
-    yearEndProjections.projectedNetIncome = yearEndProjections.projectedTotalIncome - yearEndProjections.projectedTotalExpenses;
-    yearEndProjections.projectedTotalIncome += yearEndProjections.currentYearActuals.income;
-    yearEndProjections.projectedTotalExpenses += yearEndProjections.currentYearActuals.expenses;
     yearEndProjections.projectedNetIncome = yearEndProjections.projectedTotalIncome - yearEndProjections.projectedTotalExpenses;
     
     // Risk indicators with safety checks
@@ -2586,16 +2735,77 @@ app.get('/api/predictions', async (req, res) => {
         expiringLeases: safeRiskIndicators.expiringLeases,
         expenseAlerts: safeRiskIndicators.highExpenseCategories
       },
-      recommendations: generateRecommendations(collectionRate, safeRiskIndicators, propertyPredictions)
+      recommendations: generateRecommendations(collectionRate, safeRiskIndicators, propertyPredictions, properties)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-function generateRecommendations(collectionRate, risks, properties) {
+async function getOllamaRentRecommendation(property, fetchFn, ollamaUrl = 'http://localhost:11434') {
+  try {
+    const occupancyRate = property.total_units > 0 ? Math.round((property.tenant_count / property.total_units) * 100) : 0;
+    const prompt = `Rent expert. Property: ${property.name}, ${property.type}, ${occupancyRate}% occupied, current ₹${property.monthly_rent || 0}. Suggest new rent range in INR with reasoning. JSON: {"recommendedRentRange":"₹X-₹Y","reasoning":"brief","confidence":"high|medium|low","action":"increase|decrease|maintain"}`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout for slower models
+
+    const fullUrl = `${ollamaUrl}/api/generate`;
+    const requestBody = {
+      model: 'qwen2.5-coder:7b',
+      prompt: prompt,
+      stream: false
+    };
+
+    console.log('[AI] Calling Ollama at:', fullUrl);
+    console.log('[AI] Request body:', JSON.stringify(requestBody, null, 2));
+
+    const response = await fetchFn(fullUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log(`[AI] Ollama error ${response.status}: ${response.statusText}`, errorText);
+      return null;
+    }
+
+    console.log('[AI] Ollama response OK');
+
+    const data = await response.json();
+    const responseText = data.response || '';
+
+    // Try to extract JSON from response
+    let recommendation;
+    try {
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        recommendation = JSON.parse(jsonMatch[0]);
+      }
+    } catch (e) {
+      console.log('Could not parse Ollama response as JSON');
+      return null;
+    }
+
+    console.log('[AI] Parsed recommendation:', recommendation);
+    return recommendation;
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.log('[AI] Ollama request timed out (30s)');
+    } else {
+      console.log('[AI] Ollama connection error:', error.message, error.stack);
+    }
+    return null;
+  }
+}
+
+function generateRecommendations(collectionRate, risks, propertyPredictions, properties) {
   const recommendations = [];
-  
+
   if (collectionRate < 70) {
     recommendations.push({
       type: 'warning',
@@ -2603,7 +2813,7 @@ function generateRecommendations(collectionRate, risks, properties) {
       message: 'Collection rate is below 70%. Consider stricter payment enforcement or review tenant screening process.'
     });
   }
-  
+
   if (risks.latePayments > 3) {
     recommendations.push({
       type: 'action',
@@ -2611,7 +2821,7 @@ function generateRecommendations(collectionRate, risks, properties) {
       message: `${risks.latePayments} late payments this month. Follow up immediately to maintain cash flow.`
     });
   }
-  
+
   if (risks.expiringLeases > 0) {
     recommendations.push({
       type: 'info',
@@ -2619,16 +2829,16 @@ function generateRecommendations(collectionRate, risks, properties) {
       message: `${risks.expiringLeases} leases expiring in next 3 months. Start renewal discussions early.`
     });
   }
-  
-  const lowOccupancy = properties.filter(p => p.occupancyRate < 50);
-  if (lowOccupancy.length > 0) {
+
+  const lowOccupancy = propertyPredictions.filter(p => p.occupancyRate < 50);
+  if (lowOccupancy.length > 0 && !recommendations.some(r => r.ai && r.type === 'warning')) {
     recommendations.push({
       type: 'warning',
       priority: 'medium',
       message: `${lowOccupancy.length} properties have low occupancy (<50%). Review pricing strategy or marketing efforts.`
     });
   }
-  
+
   if (recommendations.length === 0) {
     recommendations.push({
       type: 'success',
@@ -2636,7 +2846,7 @@ function generateRecommendations(collectionRate, risks, properties) {
       message: 'Portfolio is performing well. Continue current management practices.'
     });
   }
-  
+
   return recommendations;
 }
 

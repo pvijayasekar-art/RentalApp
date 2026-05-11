@@ -666,7 +666,7 @@ function Tenants() {
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
           <thead style={{background:"var(--bg)"}}>
             <tr style={{color:"var(--muted)",fontWeight:600,textTransform:"uppercase",fontSize:"11px",letterSpacing:"0.5px"}}>
-              {["ID","Tenant","Contact","Property/Unit","IDs","Tenancy Period","Tenure Remaining","Status",""].map((h,i) => (
+              {["ID","Tenant","Contact","Property/Unit","IDs","Tenancy Period","Tenure Time","Remaining Time","Status",""].map((h,i) => (
                 <th key={i} style={{textAlign:"left",padding:"12px 16px",borderBottom:"1px solid var(--border)"}}>{h}</th>
               ))}
             </tr>
@@ -701,7 +701,7 @@ function Tenants() {
                     const months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
                     const years = Math.floor(months / 12);
                     const remainingMonths = months % 12;
-                    
+
                     if (years > 0 && remainingMonths > 0) {
                       return `${years}y ${remainingMonths}m`;
                     } else if (years > 0) {
@@ -709,6 +709,27 @@ function Tenants() {
                     } else {
                       return `${remainingMonths}m`;
                     }
+                  })()}
+                </td>
+                <td style={{padding:"12px 16px",fontSize:"12px",color:"var(--muted)"}}>
+                  {(() => {
+                    if (!t.end_date) return '—';
+                    const today = new Date();
+                    const end = new Date(t.end_date);
+                    const diffTime = end - today;
+                    if (diffTime <= 0) return 'Expired';
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    const totalMonths = Math.floor(diffDays / 30);
+                    const years = Math.floor(totalMonths / 12);
+                    const months = totalMonths % 12;
+                    const days = diffDays % 30;
+                    if (years > 0 && months > 0 && days > 0) return `${years}y ${months}m ${days}d`;
+                    if (years > 0 && months > 0) return `${years}y ${months}m`;
+                    if (years > 0 && days > 0) return `${years}y ${days}d`;
+                    if (years > 0) return `${years}y`;
+                    if (months > 0 && days > 0) return `${months}m ${days}d`;
+                    if (months > 0) return `${months}m`;
+                    return `${days}d`;
                   })()}
                 </td>
                 <td style={{padding:"12px 16px"}}>
@@ -1871,25 +1892,81 @@ function Expenses() {
 function Predictions() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  
-  useEffect(() => { 
-    api("/predictions").then(d => { setData(d); setLoading(false); })
-    .catch(err => { 
+  const [aiData, setAiData] = useState({ loading: true, recommendations: [], ollamaConnected: false });
+
+  const fetchAiRecommendations = (force = false) => {
+    setAiData(prev => ({ ...prev, loading: true }));
+    if (force) {
+      // Clear cache first
+      api("/ai-recommendations/clear-cache", { method: 'POST' }).then(() => {
+        return api("/ai-recommendations");
+      }).then(ai => {
+        setAiData({
+          loading: false,
+          recommendations: ai.recommendations || [],
+          ollamaConnected: ai.ollamaConnected,
+          error: ai.error,
+          cached: ai.cached,
+          cachedAt: ai.cachedAt
+        });
+      }).catch(err => {
+        console.error('AI recommendations failed:', err);
+        setAiData({
+          loading: false,
+          recommendations: [],
+          ollamaConnected: false,
+          error: err.message,
+          cached: false
+        });
+      });
+    } else {
+      api("/ai-recommendations").then(ai => {
+        setAiData({
+          loading: false,
+          recommendations: ai.recommendations || [],
+          ollamaConnected: ai.ollamaConnected,
+          error: ai.error,
+          cached: ai.cached,
+          cachedAt: ai.cachedAt
+        });
+      }).catch(err => {
+        console.error('AI recommendations failed:', err);
+        setAiData({
+          loading: false,
+          recommendations: [],
+          ollamaConnected: false,
+          error: err.message,
+          cached: false
+        });
+      });
+    }
+  };
+
+  useEffect(() => {
+    // Load main predictions first (fast)
+    api("/predictions").then(d => {
+      setData(d);
+      setLoading(false);
+      // Then lazy load AI recommendations
+      fetchAiRecommendations();
+    })
+    .catch(err => {
       console.error('Failed to load predictions:', err);
-      setLoading(false); 
+      setLoading(false);
     });
   }, []);
-  
+
   if (loading) return <div style={{color:"var(--muted)",padding:"40px",textAlign:"center"}}>Loading predictions...</div>;
   if (!data) return <div style={{color:"var(--muted)",padding:"40px",textAlign:"center"}}>Failed to load predictions</div>;
-  
+
   // Safely extract data with defaults
-  const summary = data.summary || null;
+  const summary = data.summary || {};
   const forecast = data.forecast || null;
-  const propertyPredictions = data.propertyPredictions || null;
-  const yearEndProjections = data.yearEndProjections || null;
-  const risks = data.risks || null;
-  const recommendations = data.recommendations || null;
+  const propertyPredictions = data.propertyPredictions || [];
+  const yearEndProjections = data.yearEndProjections || {};
+  const risks = data.risks || {};
+  const recommendations = data.recommendations || [];
+  const aiRecommendations = aiData.recommendations || [];
   
   // Defensive check for forecast data
   if (!forecast || !Array.isArray(forecast)) {
@@ -1909,19 +1986,19 @@ function Predictions() {
       
       {/* Summary Stats */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:"16px",marginBottom:"28px"}}>
-        <StatCard label="Projected Monthly Income" value={fmt(summary.projectedMonthlyIncome)} icon="rupee" color="#22c55e" sub={`${summary.activeTenants} active tenants`}/>
-        <StatCard label="Collection Rate" value={`${summary.averageCollectionRate}%`} icon="trend" color="#3b82f6" sub={`Based on ${summary.monthsOfHistory} months data`}/>
-        <StatCard label="Year-End Projection" value={fmt(yearEndProjections.projectedNetIncome)} icon="crystal" color="#f97316" sub="Estimated net income"/>
-        <StatCard label="Risk Alerts" value={risks.latePayments + risks.expiringLeases} icon="warn" color={risks.latePayments > 0 ? '#ef4444' : '#22c55e'} sub={risks.latePayments > 0 ? 'Action required' : 'All clear'}/>
-        
+        <StatCard label="Projected Monthly Income" value={fmt(summary?.projectedMonthlyIncome)} icon="rupee" color="#22c55e" sub={`${summary?.activeTenants || 0} active tenants`}/>
+        <StatCard label="Collection Rate" value={`${summary?.averageCollectionRate || 0}%`} icon="trend" color="#3b82f6" sub={`Based on ${summary?.monthsOfHistory || 0} months data`}/>
+        <StatCard label="Year-End Projection" value={fmt(yearEndProjections?.projectedNetIncome)} icon="crystal" color="#f97316" sub="Estimated net income"/>
+        <StatCard label="Risk Alerts" value={(risks?.latePayments || 0) + (risks?.expiringLeases || 0)} icon="warn" color={(risks?.latePayments || 0) > 0 ? '#ef4444' : '#22c55e'} sub={(risks?.latePayments || 0) > 0 ? 'Action required' : 'All clear'}/>
+
         {/* Occupancy Stats */}
-        <StatCard label="Total Units" value={summary.total_units} icon="building" color="#3b82f6" sub={`${summary.occupied_units} occupied`}/>
-        <StatCard label="Occupancy Rate" value={`${summary.occupancy_rate}%`} icon="home" color={summary.occupancy_rate >= 80 ? '#22c55e' : summary.occupancy_rate >= 60 ? '#f59e0b' : '#ef4444'} sub={`${summary.vacant_units} vacant units`}/>
-        <StatCard label="Vacant Units" value={summary.vacant_units} icon="users" color="#ef4444" sub="Available for rent"/>
+        <StatCard label="Total Units" value={summary?.total_units || 0} icon="building" color="#3b82f6" sub={`${summary?.occupied_units || 0} occupied`}/>
+        <StatCard label="Occupancy Rate" value={`${summary?.occupancy_rate || 0}%`} icon="home" color={parseFloat(summary?.occupancy_rate || 0) >= 80 ? '#22c55e' : parseFloat(summary?.occupancy_rate || 0) >= 60 ? '#f59e0b' : '#ef4444'} sub={`${summary?.vacant_units || 0} vacant units`}/>
+        <StatCard label="Vacant Units" value={summary?.vacant_units || 0} icon="users" color="#ef4444" sub="Available for rent"/>
       </div>
       
       {/* Recommendations */}
-      {recommendations.length > 0 && (
+      {recommendations?.length > 0 && (
         <div style={{marginBottom:"28px"}}>
           <h3 style={{fontSize:"15px",fontWeight:700,color:"var(--text)",marginBottom:"12px"}}>Smart Recommendations</h3>
           <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
@@ -1929,13 +2006,22 @@ function Predictions() {
               <div key={i} style={{
                 padding:"12px 16px",borderRadius:"10px",borderLeft:"4px solid",
                 borderLeftColor: rec.type === 'warning' ? '#f59e0b' : rec.type === 'action' ? '#ef4444' : rec.type === 'success' ? '#22c55e' : '#3b82f6',
-                background:"var(--card)",border:"1px solid var(--border)"
+                background:"var(--card)",border:"1px solid var(--border)",
+                boxShadow: rec.ai ? '0 0 0 1px #8b5cf622' : 'none'
               }}>
-                <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"}}>
                   <span style={{
                     fontSize:"11px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",
                     color: rec.priority === 'high' ? '#ef4444' : rec.priority === 'medium' ? '#f59e0b' : '#22c55e'
                   }}>{rec.priority}</span>
+                  {rec.ai && (
+                    <span style={{
+                      fontSize:"9px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",
+                      padding:"2px 6px",borderRadius:"4px",
+                      background: 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)',
+                      color: '#fff'
+                    }}>AI 🤖</span>
+                  )}
                   <span style={{fontSize:"13px",color:"var(--text)"}}>{rec.message}</span>
                 </div>
               </div>
@@ -1943,7 +2029,109 @@ function Predictions() {
           </div>
         </div>
       )}
-      
+
+      {/* AI Rent Insights - Lazy Loaded */}
+      <div style={{marginBottom:"28px"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"12px"}}>
+          <h3 style={{fontSize:"15px",fontWeight:700,color:"var(--text)",margin:0,display:"flex",alignItems:"center",gap:"8px"}}>
+            <span style={{fontSize:"16px"}}>🤖</span> AI Rent Insights
+            {aiData.cached && (
+              <span style={{
+                fontSize:"9px",fontWeight:600,letterSpacing:"0.5px",
+                padding:"2px 6px",borderRadius:"4px",background:"#22c55e22",color:"#22c55e"
+              }}>📦 Cached {aiData.cachedAt ? new Date(aiData.cachedAt).toLocaleDateString() : ''}</span>
+            )}
+          </h3>
+          <div style={{display:"flex",gap:"8px"}}>
+            <button
+              onClick={() => fetchAiRecommendations(false)}
+              disabled={aiData.loading}
+              style={{
+                padding:"6px 12px",fontSize:"12px",fontWeight:600,
+                background: aiData.loading ? "var(--muted)" : "#8b5cf6",color:"#fff",
+                border:"none",borderRadius:"6px",cursor: aiData.loading ? "not-allowed" : "pointer",
+                display:"flex",alignItems:"center",gap:"6px"
+              }}
+            >
+              {aiData.loading ? (
+                <>
+                  <span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>↻</span>
+                  Analyzing...
+                </>
+              ) : (
+                <>↻ Refresh</>
+              )}
+            </button>
+            <button
+              onClick={() => fetchAiRecommendations(true)}
+              disabled={aiData.loading}
+              title="Force re-analyze with Ollama (clears cache)"
+              style={{
+                padding:"6px 12px",fontSize:"12px",fontWeight:600,
+                background: aiData.loading ? "var(--muted)" : "#ef4444",color:"#fff",
+                border:"none",borderRadius:"6px",cursor: aiData.loading ? "not-allowed" : "pointer",
+                display:"flex",alignItems:"center",gap:"6px"
+              }}
+            >
+              {aiData.loading ? '...' : '⚡ Force'}
+            </button>
+          </div>
+        </div>
+        {aiData.loading ? (
+          <div style={{
+            padding:"20px",borderRadius:"12px",border:"1px solid #8b5cf644",
+            background:"#8b5cf608",textAlign:"center"
+          }}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"10px",marginBottom:"8px"}}>
+              <div style={{
+                width:"16px",height:"16px",border:"2px solid #8b5cf6",
+                borderTopColor:"transparent",borderRadius:"50%",
+                animation:"spin 1s linear infinite"
+              }}/>
+              <span style={{fontSize:"14px",color:"var(--text)",fontWeight:500}}>
+                Analyzing properties with AI...
+              </span>
+            </div>
+            <div style={{fontSize:"12px",color:"var(--muted)"}}>
+              Contacting Ollama (qwen2.5-coder:7b) - timeout 30s
+            </div>
+          </div>
+        ) : aiRecommendations.length > 0 ? (
+          <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+            {aiRecommendations.map((rec, i) => (
+              <div key={i} style={{
+                padding:"14px 18px",borderRadius:"12px",borderLeft:"4px solid #8b5cf6",
+                background:"linear-gradient(135deg, #8b5cf611 0%, #6366f111 100%)",border:"1px solid #8b5cf644"
+              }}>
+                <div style={{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap",marginBottom:"6px"}}>
+                  <span style={{
+                    fontSize:"10px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",
+                    padding:"3px 8px",borderRadius:"6px",
+                    background: rec.priority === 'high' ? '#8b5cf6' : '#6366f1',color: '#fff'
+                  }}>{rec.aiData?.confidence || 'medium'} confidence</span>
+                  <span style={{fontSize:"12px",color:"#8b5cf6",fontWeight:600}}>AI Suggested Action: {rec.aiData?.action?.toUpperCase()}</span>
+                </div>
+                <div style={{fontSize:"14px",color:"var(--text)",fontWeight:500}}>{rec.message}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{
+            padding:"20px",borderRadius:"12px",border:"1px dashed #8b5cf644",
+            background:"#8b5cf608",textAlign:"center"
+          }}>
+            <div style={{fontSize:"14px",color:"var(--text)",fontWeight:500,marginBottom:"8px"}}>
+              🤖 AI Rent Analysis
+            </div>
+            <div style={{fontSize:"13px",color:"var(--muted)"}}>
+              {!aiData.ollamaConnected && propertyPredictions.some(p => p.occupancyRate < 80)
+                ? "Ollama AI is not connected. Troubleshooting: 1) Run 'ollama serve' to start Ollama, 2) Run 'ollama pull qwen2.5-coder:7b' to download model, 3) If using Docker: ensure OLLAMA_HOST=0.0.0.0 is set so Ollama accepts external connections"
+                : "All properties are performing well with healthy occupancy rates (≥80%). No rent adjustments recommended at this time."}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Financial Year Forecast */}
       <div style={{background:"var(--card)",border:"1px solid var(--border)",borderRadius:"16px",padding:"24px",marginBottom:"28px"}}>
         <h3 style={{fontSize:"15px",fontWeight:700,color:"var(--text)",margin:"0 0 20px"}}>Current Financial Year Forecast ({getCurrentFinancialYear()})</h3>
@@ -1994,7 +2182,7 @@ function Predictions() {
             </tr>
           </thead>
           <tbody>
-            {propertyPredictions.map(p => (
+            {Array.isArray(propertyPredictions) && propertyPredictions.map(p => (
               <tr key={p.id}>
                 <td style={{padding:"12px 16px",borderBottom:"1px solid var(--border)"}}>
                   <div style={{fontWeight:600,color:"var(--text)"}}>{p.name}</div>
@@ -2026,25 +2214,25 @@ function Predictions() {
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"20px"}}>
           <div style={{textAlign:"center",padding:"20px",background:"var(--bg)",borderRadius:"12px"}}>
             <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"8px"}}>Projected Total Income</div>
-            <div style={{fontSize:"24px",fontWeight:800,color:"#22c55e"}}>{fmt(yearEndProjections.projectedTotalIncome)}</div>
+            <div style={{fontSize:"24px",fontWeight:800,color:"#22c55e"}}>{fmt(yearEndProjections?.projectedTotalIncome)}</div>
             <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>
-              Actual so far: {fmt(yearEndProjections.currentYearActuals.income)}
+              Actual so far: {fmt(yearEndProjections?.currentYearActuals?.income)}
             </div>
           </div>
           <div style={{textAlign:"center",padding:"20px",background:"var(--bg)",borderRadius:"12px"}}>
             <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"8px"}}>Projected Total Expenses</div>
-            <div style={{fontSize:"24px",fontWeight:800,color:"#ef4444"}}>{fmt(yearEndProjections.projectedTotalExpenses)}</div>
+            <div style={{fontSize:"24px",fontWeight:800,color:"#ef4444"}}>{fmt(yearEndProjections?.projectedTotalExpenses)}</div>
             <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>
-              Actual so far: {fmt(yearEndProjections.currentYearActuals.expenses)}
+              Actual so far: {fmt(yearEndProjections?.currentYearActuals?.expenses)}
             </div>
           </div>
-          <div style={{textAlign:"center",padding:"20px",background:"var(--bg)",borderRadius:"12px",border:"2px solid",borderColor: yearEndProjections.projectedNetIncome > 0 ? '#22c55e' : '#ef4444'}}>
+          <div style={{textAlign:"center",padding:"20px",background:"var(--bg)",borderRadius:"12px",border:"2px solid",borderColor: (yearEndProjections?.projectedNetIncome || 0) > 0 ? '#22c55e' : '#ef4444'}}>
             <div style={{fontSize:"12px",color:"var(--muted)",marginBottom:"8px"}}>Projected Net Income</div>
-            <div style={{fontSize:"28px",fontWeight:800,color: yearEndProjections.projectedNetIncome > 0 ? '#22c55e' : '#ef4444'}}>
-              {fmt(yearEndProjections.projectedNetIncome)}
+            <div style={{fontSize:"28px",fontWeight:800,color: (yearEndProjections?.projectedNetIncome || 0) > 0 ? '#22c55e' : '#ef4444'}}>
+              {fmt(yearEndProjections?.projectedNetIncome)}
             </div>
             <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"4px"}}>
-              Margin: {((yearEndProjections.projectedNetIncome / yearEndProjections.projectedTotalIncome) * 100).toFixed(1)}%
+              Margin: {yearEndProjections?.projectedTotalIncome > 0 ? ((yearEndProjections.projectedNetIncome / yearEndProjections.projectedTotalIncome) * 100).toFixed(1) : '0.0'}%
             </div>
           </div>
         </div>
