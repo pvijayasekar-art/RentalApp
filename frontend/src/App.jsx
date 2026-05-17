@@ -425,7 +425,7 @@ function Tenants() {
   const [documents, setDocuments] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
   const [docModalFile, setDocModalFile] = useState(null);
-  const [docForm, setDocForm] = useState({ document_type: 'other', description: '' });
+  const [docForm, setDocForm] = useState({ document_type: 'other', description: '', agreement_start_date: '', agreement_end_date: '' });
   const [extractModal, setExtractModal] = useState(null);
   const [extractedData, setExtractedData] = useState({ name: '', dateOfBirth: '', aadharNumber: '', panNumber: '', address: '', rawText: '', error: '' });
   const [extracting, setExtracting] = useState(false);
@@ -531,11 +531,20 @@ function Tenants() {
     if (!docModalFile) return alert('Please select a file');
     if (!docModal || !docModal.id) return alert('Error: No tenant selected');
     
+    // Validate agreement dates if document type is agreement
+    if (docForm.document_type === 'agreement') {
+      if (!docForm.agreement_start_date || !docForm.agreement_end_date) {
+        return alert('Please provide both start and end dates for the rental agreement');
+      }
+    }
+    
     console.log(`[FRONTEND] Uploading file for tenant ${docModal.id}:`, docModalFile.name);
     const formData = new FormData();
     formData.append('file', docModalFile);
     formData.append('document_type', docForm.document_type);
     formData.append('description', docForm.description);
+    formData.append('agreement_start_date', docForm.agreement_start_date || '');
+    formData.append('agreement_end_date', docForm.agreement_end_date || '');
     
     try {
       const res = await fetch(`${API}/tenants/${docModal.id}/documents`, {
@@ -547,7 +556,7 @@ function Tenants() {
       
       if (res.ok) {
         setDocModalFile(null);
-        setDocForm({ document_type: 'other', description: '' });
+        setDocForm({ document_type: 'other', description: '', agreement_start_date: '', agreement_end_date: '' });
         const docs = await api(`/tenants/${docModal.id}/documents`);
         setDocuments(docs);
         alert('Document uploaded successfully');
@@ -827,6 +836,16 @@ function Tenants() {
             <Field label="Description (optional)">
               <input type="text" value={docForm.description} onChange={e => setDocForm({...docForm, description: e.target.value})} placeholder="Document description..." style={inputStyle}/>
             </Field>
+            {docForm.document_type === 'agreement' && (
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginTop:"12px"}}>
+                <Field label="Agreement Start Date">
+                  <input type="date" value={docForm.agreement_start_date} onChange={e => setDocForm({...docForm, agreement_start_date: e.target.value})} style={inputStyle}/>
+                </Field>
+                <Field label="Agreement End Date">
+                  <input type="date" value={docForm.agreement_end_date} onChange={e => setDocForm({...docForm, agreement_end_date: e.target.value})} style={inputStyle}/>
+                </Field>
+              </div>
+            )}
             {docModalFile && (
               <div style={{fontSize:"12px",color:"var(--muted)",marginTop:"8px"}}>
                 Selected: {docModalFile.name} ({formatFileSize(docModalFile.size)})
@@ -850,6 +869,11 @@ function Tenants() {
                       <Badge status={doc.document_type}/> · {formatFileSize(doc.file_size)} · {fmtDate(doc.uploaded_at)}
                     </div>
                     {doc.description && <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"2px"}}>{doc.description}</div>}
+                    {doc.document_type === 'agreement' && (doc.agreement_start_date || doc.agreement_end_date) && (
+                      <div style={{fontSize:"11px",color:"var(--muted)",marginTop:"2px"}}>
+                        📅 {doc.agreement_start_date ? fmtDate(doc.agreement_start_date) : 'N/A'} - {doc.agreement_end_date ? fmtDate(doc.agreement_end_date) : 'N/A'}
+                      </div>
+                    )}
                   </div>
                   <div style={{display:"flex",gap:"6px"}}>
                     {(doc.document_type === 'aadhar' || doc.document_type === 'pan') && (
@@ -3723,6 +3747,444 @@ function TaxFiling() {
   );
 }
 
+// ─── RENTAL AGREEMENTS ───────────────────────────────────────────────────────────
+function RentalAgreements() {
+  const [agreements, setAgreements] = useState([]);
+  const [filteredAgreements, setFilteredAgreements] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterTenantId, setFilterTenantId] = useState('');
+  const [tenants, setTenants] = useState([]);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [uploadForm, setUploadForm] = useState({ tenant_id: '', description: '', agreement_start_date: '', agreement_end_date: '', agreement_status: 'draft' });
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingAgreement, setEditingAgreement] = useState(null);
+  const [editForm, setEditForm] = useState({ agreement_status: 'draft' });
+
+  useEffect(() => {
+    loadAgreements();
+    loadTenants();
+  }, []);
+
+  useEffect(() => {
+    applyFilters();
+  }, [agreements, filterTenantId]);
+
+  async function loadTenants() {
+    try {
+      const data = await api('/tenants');
+      setTenants(data || []);
+    } catch (err) {
+      console.error('Error loading tenants:', err);
+    }
+  }
+
+  async function loadAgreements() {
+    setLoading(true);
+    try {
+      // Load all tenants first, then get agreements for each
+      const tenantsData = await api('/tenants');
+      const allAgreements = [];
+      
+      for (const tenant of tenantsData) {
+        const tenantAgreements = await api(`/tenants/${tenant.id}/rental-agreements`);
+        const agreementsWithTenant = tenantAgreements.map(agreement => ({
+          ...agreement,
+          tenant_name: tenant.name,
+          tenant_phone: tenant.phone,
+          property_name: tenant.property_name,
+          unit_number: tenant.unit_number
+        }));
+        allAgreements.push(...agreementsWithTenant);
+      }
+      
+      setAgreements(allAgreements);
+      setFilteredAgreements(allAgreements);
+      setTenants(tenantsData || []);
+    } catch (err) {
+      console.error('Error loading agreements:', err);
+      setAgreements([]);
+      setFilteredAgreements([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function applyFilters() {
+    let filtered = [...agreements];
+    
+    if (filterTenantId) {
+      filtered = filtered.filter(a => a.tenant_id?.toString() === filterTenantId);
+    }
+    
+    setFilteredAgreements(filtered);
+  }
+
+  function clearFilters() {
+    setFilterTenantId('');
+  }
+
+  async function uploadAgreement() {
+    if (!selectedFile) return alert('Please select a file');
+    if (!uploadForm.tenant_id) return alert('Please select a tenant');
+    if (!uploadForm.agreement_start_date || !uploadForm.agreement_end_date) {
+      return alert('Please provide both start and end dates for the agreement');
+    }
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    formData.append('description', uploadForm.description);
+    formData.append('agreement_start_date', uploadForm.agreement_start_date);
+    formData.append('agreement_end_date', uploadForm.agreement_end_date);
+    formData.append('agreement_status', uploadForm.agreement_status);
+
+    try {
+      const res = await fetch(`${API}/tenants/${uploadForm.tenant_id}/rental-agreements`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (res.ok) {
+        alert('Rental agreement uploaded successfully');
+        setUploadModalOpen(false);
+        setSelectedFile(null);
+        setUploadForm({ tenant_id: '', description: '', agreement_start_date: '', agreement_end_date: '', agreement_status: 'draft' });
+        loadAgreements();
+      } else {
+        const errorData = await res.json();
+        alert('Upload failed: ' + (errorData.error || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Upload failed: ' + err.message);
+    }
+  }
+
+  async function deleteAgreement(agreementId) {
+    if (!confirm('Are you sure you want to delete this rental agreement?')) return;
+    try {
+      await api(`/documents/${agreementId}`, 'DELETE');
+      loadAgreements();
+      alert('Rental agreement deleted successfully');
+    } catch (err) {
+      alert('Error deleting agreement: ' + err.message);
+    }
+  }
+
+  function openEditModal(agreement) {
+    setEditingAgreement(agreement);
+    setEditForm({ agreement_status: agreement.agreement_status || 'draft' });
+    setEditModalOpen(true);
+  }
+
+  async function updateAgreementStatus() {
+    try {
+      await api(`/rental-agreements/${editingAgreement.id}`, 'PUT', {
+        agreement_start_date: editingAgreement.agreement_start_date,
+        agreement_end_date: editingAgreement.agreement_end_date,
+        description: editingAgreement.description,
+        agreement_status: editForm.agreement_status
+      });
+      alert('Agreement status updated successfully');
+      setEditModalOpen(false);
+      setEditingAgreement(null);
+      loadAgreements();
+    } catch (err) {
+      alert('Error updating agreement: ' + err.message);
+    }
+  }
+
+  const activeAgreements = filteredAgreements.filter(a => {
+    if (!a.agreement_end_date) return true;
+    return new Date(a.agreement_end_date) >= new Date();
+  });
+
+  const expiredAgreements = filteredAgreements.filter(a => {
+    if (!a.agreement_end_date) return false;
+    return new Date(a.agreement_end_date) < new Date();
+  });
+
+  return (
+    <Card>
+      <h2 style={{margin:"0 0 20px",fontSize:"1.5rem",color:"var(--text)",display:"flex",alignItems:"center",gap:"10px"}}>
+        <span style={{fontSize:"1.8rem"}}>📄</span> Rental Agreements
+        <span style={{marginLeft:"auto",fontSize:"0.9rem",color:"var(--text-muted)",fontWeight:500}}>
+          Total: <strong style={{color:"var(--success)"}}>{filteredAgreements.length}</strong> agreements
+        </span>
+      </h2>
+
+      {/* Filters */}
+      <div style={{display:"flex",gap:"12px",marginBottom:"20px",padding:"16px",background:"var(--bg-secondary)",borderRadius:"12px",border:"1px solid var(--border)",flexWrap:"wrap",alignItems:"center"}}>
+        <span style={{fontSize:"0.9rem",fontWeight:600,color:"var(--text)",marginRight:"8px"}}>Filter by:</span>
+        
+        <select 
+          value={filterTenantId} 
+          onChange={e => setFilterTenantId(e.target.value)}
+          style={{padding:"8px 12px",borderRadius:"8px",border:"1px solid var(--border)",background:"var(--card)",color:"var(--text)",fontSize:"0.9rem",cursor:"pointer"}}
+        >
+          <option value="">All Tenants</option>
+          {tenants.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        
+        {(filterTenantId) && (
+          <button onClick={clearFilters} style={{padding:"6px 12px",background:"var(--accent)",color:"#fff",border:"none",borderRadius:"6px",cursor:"pointer",fontSize:"0.85rem",fontWeight:500}}>
+            Clear Filters
+          </button>
+        )}
+        
+        <button onClick={() => setUploadModalOpen(true)} style={{marginLeft:"auto",padding:"8px 16px",background:"var(--success)",color:"#fff",border:"none",borderRadius:"8px",cursor:"pointer",fontSize:"0.9rem",fontWeight:600,display:"flex",alignItems:"center",gap:"6px"}}>
+          <Icon name="plus" size={16}/> Upload Agreement
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{textAlign:"center",padding:"40px",color:"var(--text-muted)"}}>Loading rental agreements...</div>
+      ) : filteredAgreements.length === 0 ? (
+        <div style={{textAlign:"center",padding:"40px",color:"var(--text-muted)"}}>
+          No rental agreements found. Click "Upload Agreement" to add one.
+        </div>
+      ) : (
+        <>
+          {/* Active Agreements */}
+          {activeAgreements.length > 0 && (
+            <div style={{marginBottom:"24px"}}>
+              <h3 style={{margin:"0 0 12px",fontSize:"1.1rem",color:"var(--success)",fontWeight:600}}>
+                Active Agreements ({activeAgreements.length})
+              </h3>
+              <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+                {activeAgreements.map(agreement => (
+                  <div key={agreement.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"16px",background:"var(--bg-secondary)",borderRadius:"12px",border:"1px solid var(--border)"}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:600,fontSize:"0.95rem",color:"var(--text)",marginBottom:"4px"}}>
+                        {agreement.original_name}
+                      </div>
+                      <div style={{fontSize:"0.85rem",color:"var(--text-muted)",marginBottom:"4px"}}>
+                        <strong>{agreement.tenant_name}</strong> · {agreement.property_name} · Unit {agreement.unit_number}
+                      </div>
+                      <div style={{fontSize:"0.85rem",color:"var(--accent)",fontWeight:500}}>
+                        📅 {fmtDate(agreement.agreement_start_date)} - {fmtDate(agreement.agreement_end_date)}
+                      </div>
+                      <div style={{marginTop:"4px"}}>
+                        <span style={{
+                          fontSize:"0.75rem",
+                          fontWeight:600,
+                          padding:"2px 8px",
+                          borderRadius:"4px",
+                          background:agreement.agreement_status === 'agreed' ? "rgba(16, 185, 129, 0.15)" : "rgba(245, 158, 11, 0.13)",
+                          color:agreement.agreement_status === 'agreed' ? "#10b981" : "#f59e0b",
+                          textTransform:"capitalize"
+                        }}>
+                          {agreement.agreement_status || 'draft'}
+                        </span>
+                      </div>
+                      {agreement.description && (
+                        <div style={{fontSize:"0.8rem",color:"var(--text-muted)",marginTop:"4px"}}>{agreement.description}</div>
+                      )}
+                    </div>
+                    <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
+                      <a href={`${API}/documents/${agreement.id}/download`} target="_blank" rel="noopener noreferrer" style={{padding:"6px 12px",background:"var(--accent)22",border:"1px solid var(--accent)44",borderRadius:"6px",color:"var(--accent)",textDecoration:"none",fontSize:"0.85rem",fontWeight:500}}>
+                        View
+                      </a>
+                      <button onClick={() => openEditModal(agreement)} style={{padding:"6px",background:"var(--accent)22",border:"1px solid var(--accent)44",borderRadius:"6px",color:"var(--accent)",cursor:"pointer"}}>
+                        <Icon name="edit" size={14}/>
+                      </button>
+                      <button onClick={() => deleteAgreement(agreement.id)} style={{padding:"6px",background:"#ef444411",border:"1px solid #ef444433",borderRadius:"6px",color:"#ef4444",cursor:"pointer"}}>
+                        <Icon name="trash" size={14}/>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Expired Agreements */}
+          {expiredAgreements.length > 0 && (
+            <div>
+              <h3 style={{margin:"0 0 12px",fontSize:"1.1rem",color:"var(--warning)",fontWeight:600}}>
+                Expired Agreements ({expiredAgreements.length})
+              </h3>
+              <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+                {expiredAgreements.map(agreement => (
+                  <div key={agreement.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"16px",background:"var(--bg-secondary)",borderRadius:"12px",border:"1px solid var(--border)",opacity:0.7}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:600,fontSize:"0.95rem",color:"var(--text)",marginBottom:"4px"}}>
+                        {agreement.original_name}
+                      </div>
+                      <div style={{fontSize:"0.85rem",color:"var(--text-muted)",marginBottom:"4px"}}>
+                        <strong>{agreement.tenant_name}</strong> · {agreement.property_name} · Unit {agreement.unit_number}
+                      </div>
+                      <div style={{fontSize:"0.85rem",color:"var(--warning)",fontWeight:500}}>
+                        📅 {fmtDate(agreement.agreement_start_date)} - {fmtDate(agreement.agreement_end_date)} (Expired)
+                      </div>
+                      <div style={{marginTop:"4px"}}>
+                        <span style={{
+                          fontSize:"0.75rem",
+                          fontWeight:600,
+                          padding:"2px 8px",
+                          borderRadius:"4px",
+                          background:agreement.agreement_status === 'agreed' ? "rgba(16, 185, 129, 0.15)" : "rgba(245, 158, 11, 0.13)",
+                          color:agreement.agreement_status === 'agreed' ? "#10b981" : "#f59e0b",
+                          textTransform:"capitalize"
+                        }}>
+                          {agreement.agreement_status || 'draft'}
+                        </span>
+                      </div>
+                      {agreement.description && (
+                        <div style={{fontSize:"0.8rem",color:"var(--text-muted)",marginTop:"4px"}}>{agreement.description}</div>
+                      )}
+                    </div>
+                    <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
+                      <a href={`${API}/documents/${agreement.id}/download`} target="_blank" rel="noopener noreferrer" style={{padding:"6px 12px",background:"var(--accent)22",border:"1px solid var(--accent)44",borderRadius:"6px",color:"var(--accent)",textDecoration:"none",fontSize:"0.85rem",fontWeight:500}}>
+                        View
+                      </a>
+                      <button onClick={() => openEditModal(agreement)} style={{padding:"6px",background:"var(--accent)22",border:"1px solid var(--accent)44",borderRadius:"6px",color:"var(--accent)",cursor:"pointer"}}>
+                        <Icon name="edit" size={14}/>
+                      </button>
+                      <button onClick={() => deleteAgreement(agreement.id)} style={{padding:"6px",background:"#ef444411",border:"1px solid #ef444433",borderRadius:"6px",color:"#ef4444",cursor:"pointer"}}>
+                        <Icon name="trash" size={14}/>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Upload Modal */}
+      {uploadModalOpen && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}}>
+          <div style={{background:"var(--card)",borderRadius:"16px",padding:"24px",width:"100%",maxWidth:"500px",maxHeight:"90vh",overflowY:"auto",border:"1px solid var(--border)"}}>
+            <h3 style={{margin:"0 0 20px",fontSize:"1.3rem",color:"var(--text)"}}>Upload Rental Agreement</h3>
+            
+            <div style={{display:"flex",flexDirection:"column",gap:"16px"}}>
+              <div>
+                <label style={{display:"block",fontSize:"0.9rem",fontWeight:500,color:"var(--text)",marginBottom:"6px"}}>Tenant *</label>
+                <select 
+                  value={uploadForm.tenant_id} 
+                  onChange={e => setUploadForm({...uploadForm, tenant_id: e.target.value})}
+                  style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"0.9rem"}}
+                >
+                  <option value="">Select Tenant</option>
+                  {tenants.map(t => <option key={t.id} value={t.id}>{t.name} - {t.property_name} (Unit {t.unit_number})</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label style={{display:"block",fontSize:"0.9rem",fontWeight:500,color:"var(--text)",marginBottom:"6px"}}>Agreement File *</label>
+                <input 
+                  type="file" 
+                  onChange={e => setSelectedFile(e.target.files[0])} 
+                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                  style={{width:"100%",padding:"10px",borderRadius:"8px",border:"1px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"0.9rem"}}
+                />
+                {selectedFile && (
+                  <div style={{fontSize:"0.8rem",color:"var(--text-muted)",marginTop:"4px"}}>
+                    Selected: {selectedFile.name}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label style={{display:"block",fontSize:"0.9rem",fontWeight:500,color:"var(--text)",marginBottom:"6px"}}>Description</label>
+                <input 
+                  type="text" 
+                  value={uploadForm.description} 
+                  onChange={e => setUploadForm({...uploadForm, description: e.target.value})}
+                  placeholder="Optional description..."
+                  style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"0.9rem"}}
+                />
+              </div>
+
+              <div>
+                <label style={{display:"block",fontSize:"0.9rem",fontWeight:500,color:"var(--text)",marginBottom:"6px"}}>Status</label>
+                <select 
+                  value={uploadForm.agreement_status} 
+                  onChange={e => setUploadForm({...uploadForm, agreement_status: e.target.value})}
+                  style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"0.9rem"}}
+                >
+                  <option value="draft">Draft</option>
+                  <option value="agreed">Agreed</option>
+                </select>
+              </div>
+
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>
+                <div>
+                  <label style={{display:"block",fontSize:"0.9rem",fontWeight:500,color:"var(--text)",marginBottom:"6px"}}>Start Date *</label>
+                  <input 
+                    type="date" 
+                    value={uploadForm.agreement_start_date} 
+                    onChange={e => setUploadForm({...uploadForm, agreement_start_date: e.target.value})}
+                    style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"0.9rem"}}
+                  />
+                </div>
+                <div>
+                  <label style={{display:"block",fontSize:"0.9rem",fontWeight:500,color:"var(--text)",marginBottom:"6px"}}>End Date *</label>
+                  <input 
+                    type="date" 
+                    value={uploadForm.agreement_end_date} 
+                    onChange={e => setUploadForm({...uploadForm, agreement_end_date: e.target.value})}
+                    style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"0.9rem"}}
+                  />
+                </div>
+              </div>
+
+              <div style={{display:"flex",gap:"12px",marginTop:"8px"}}>
+                <button onClick={() => { setUploadModalOpen(false); setSelectedFile(null); setUploadForm({ tenant_id: '', description: '', agreement_start_date: '', agreement_end_date: '' }); }} style={{flex:1,padding:"10px 20px",border:"1px solid var(--border)",background:"var(--bg)",color:"var(--text)",borderRadius:"8px",cursor:"pointer",fontWeight:500}}>
+                  Cancel
+                </button>
+                <button onClick={uploadAgreement} disabled={!selectedFile || !uploadForm.tenant_id || !uploadForm.agreement_start_date || !uploadForm.agreement_end_date} style={{flex:1,padding:"10px 20px",background: selectedFile && uploadForm.tenant_id && uploadForm.agreement_start_date && uploadForm.agreement_end_date ? "var(--success)" : "var(--border)",color:"#fff",border:"none",borderRadius:"8px",cursor: selectedFile && uploadForm.tenant_id && uploadForm.agreement_start_date && uploadForm.agreement_end_date ? "pointer" : "not-allowed",fontWeight:600}}>
+                  Upload
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Status Modal */}
+      {editModalOpen && editingAgreement && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}}>
+          <div style={{background:"var(--card)",borderRadius:"16px",padding:"24px",width:"100%",maxWidth:"400px",border:"1px solid var(--border)"}}>
+            <h3 style={{margin:"0 0 20px",fontSize:"1.3rem",color:"var(--text)"}}>Update Agreement Status</h3>
+            
+            <div style={{display:"flex",flexDirection:"column",gap:"16px"}}>
+              <div>
+                <label style={{display:"block",fontSize:"0.9rem",fontWeight:500,color:"var(--text)",marginBottom:"6px"}}>Current Status</label>
+                <div style={{padding:"8px 12px",background:"var(--bg-secondary)",borderRadius:"8px",fontSize:"0.9rem",color:"var(--text-muted)",textTransform:"capitalize"}}>
+                  {editingAgreement.agreement_status || 'draft'}
+                </div>
+              </div>
+
+              <div>
+                <label style={{display:"block",fontSize:"0.9rem",fontWeight:500,color:"var(--text)",marginBottom:"6px"}}>New Status</label>
+                <select 
+                  value={editForm.agreement_status} 
+                  onChange={e => setEditForm({...editForm, agreement_status: e.target.value})}
+                  style={{width:"100%",padding:"10px 12px",borderRadius:"8px",border:"1px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"0.9rem"}}
+                >
+                  <option value="draft">Draft</option>
+                  <option value="agreed">Agreed</option>
+                </select>
+              </div>
+
+              <div style={{display:"flex",gap:"12px",marginTop:"8px"}}>
+                <button onClick={() => { setEditModalOpen(false); setEditingAgreement(null); setEditForm({ agreement_status: 'draft' }); }} style={{flex:1,padding:"10px 20px",border:"1px solid var(--border)",background:"var(--bg)",color:"var(--text)",borderRadius:"8px",cursor:"pointer",fontWeight:500}}>
+                  Cancel
+                </button>
+                <button onClick={updateAgreementStatus} style={{flex:1,padding:"10px 20px",background:"var(--success)",color:"#fff",border:"none",borderRadius:"8px",cursor:"pointer",fontWeight:600}}>
+                  Update
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // LAYOUT / APP
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3733,6 +4195,7 @@ const PAGES = [
   { id:"collections", label:"Collections", icon:"rupee" },
   { id:"expenses", label:"Expenses", icon:"receipt" },
   { id:"receipts", label:"Receipts", icon:"receipt" },
+  { id:"rentalagreements", label:"Rental Agreements", icon:"file-text" },
   { id:"taxfiling", label:"Tax Filing", icon:"calculator" },
   { id:"ledger", label:"Ledger", icon:"book" },
   { id:"predictions", label:"Predictions", icon:"chart" },
@@ -3742,7 +4205,7 @@ const PAGES = [
 export default function App() {
   const [page, setPage] = useState("dashboard");
 
-  const pages = { dashboard: <Dashboard/>, properties: <Properties/>, tenants: <Tenants/>, collections: <Collections/>, expenses: <Expenses/>, receipts: <Receipts/>, predictions: <Predictions/>, taxfiling: <TaxFiling/>, ledger: <Ledger/>, profitlossreport: <ProfitLossReport/> };
+  const pages = { dashboard: <Dashboard/>, properties: <Properties/>, tenants: <Tenants/>, collections: <Collections/>, expenses: <Expenses/>, receipts: <Receipts/>, rentalagreements: <RentalAgreements/>, predictions: <Predictions/>, taxfiling: <TaxFiling/>, ledger: <Ledger/>, profitlossreport: <ProfitLossReport/> };
 
   return (
     <>
