@@ -892,11 +892,11 @@ app.delete('/api/expenses/:id', async (req, res) => {
 // Upload document for a tenant
 app.post('/api/tenants/:tenantId/documents', upload.single('file'), async (req, res) => {
   const { tenantId } = req.params;
-  const { document_type, description } = req.body;
+  const { document_type, description, agreement_start_date, agreement_end_date } = req.body;
   
   console.log(`[UPLOAD] Tenant document upload requested for tenant ${tenantId}`);
   console.log(`[UPLOAD] Request file:`, req.file ? `Yes (${req.file.originalname}, ${req.file.size} bytes)` : 'No file');
-  console.log(`[UPLOAD] Request body:`, { document_type, description });
+  console.log(`[UPLOAD] Request body:`, { document_type, description, agreement_start_date, agreement_end_date });
   
   if (!req.file) {
     console.error(`[UPLOAD] Error: No file uploaded`);
@@ -905,9 +905,9 @@ app.post('/api/tenants/:tenantId/documents', upload.single('file'), async (req, 
   
   try {
     const [result] = await pool.query(
-      `INSERT INTO tenant_documents (tenant_id, filename, original_name, mime_type, file_size, file_content, document_type, description)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [tenantId, req.file.filename || req.file.originalname, req.file.originalname, req.file.mimetype, req.file.size, req.file.buffer, document_type || 'other', description || '']
+      `INSERT INTO tenant_documents (tenant_id, filename, original_name, mime_type, file_size, file_content, document_type, description, agreement_start_date, agreement_end_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [tenantId, req.file.filename || req.file.originalname, req.file.originalname, req.file.mimetype, req.file.size, req.file.buffer, document_type || 'other', description || '', agreement_start_date || null, agreement_end_date || null]
     );
     console.log(`[UPLOAD] Success: Document uploaded with ID ${result.insertId}`);
     res.json({ id: result.insertId, message: 'Document uploaded successfully' });
@@ -924,7 +924,7 @@ app.post('/api/tenants/:tenantId/documents', upload.single('file'), async (req, 
 app.get('/api/tenants/:tenantId/documents', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT id, tenant_id, filename, original_name, mime_type, file_size, document_type, description, uploaded_at
+      `SELECT id, tenant_id, filename, original_name, mime_type, file_size, document_type, description, uploaded_at, agreement_start_date, agreement_end_date
        FROM tenant_documents WHERE tenant_id = ? ORDER BY uploaded_at DESC`,
       [req.params.tenantId]
     );
@@ -937,6 +937,70 @@ app.delete('/api/documents/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM tenant_documents WHERE id=?', [req.params.id]);
     res.json({ message: 'Document deleted' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── RENTAL AGREEMENTS ────────────────────────────────────────────────────────
+// Get all rental agreements for a tenant
+app.get('/api/tenants/:tenantId/rental-agreements', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, tenant_id, filename, original_name, mime_type, file_size, description, uploaded_at, agreement_start_date, agreement_end_date, agreement_status
+       FROM tenant_documents 
+       WHERE tenant_id = ? AND document_type = 'agreement' 
+       ORDER BY uploaded_at DESC`,
+      [req.params.tenantId]
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Upload rental agreement for a tenant
+app.post('/api/tenants/:tenantId/rental-agreements', upload.single('file'), async (req, res) => {
+  const { tenantId } = req.params;
+  const { description, agreement_start_date, agreement_end_date, agreement_status } = req.body;
+  
+  console.log(`[RENTAL AGREEMENT] Upload requested for tenant ${tenantId}`);
+  console.log(`[RENTAL AGREEMENT] Request file:`, req.file ? `Yes (${req.file.originalname}, ${req.file.size} bytes)` : 'No file');
+  console.log(`[RENTAL AGREEMENT] Agreement dates:`, { agreement_start_date, agreement_end_date });
+  console.log(`[RENTAL AGREEMENT] Agreement status:`, agreement_status);
+  
+  if (!req.file) {
+    console.error(`[RENTAL AGREEMENT] Error: No file uploaded`);
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  
+  if (!agreement_start_date || !agreement_end_date) {
+    return res.status(400).json({ error: 'Agreement start date and end date are required' });
+  }
+  
+  try {
+    const [result] = await pool.query(
+      `INSERT INTO tenant_documents (tenant_id, filename, original_name, mime_type, file_size, file_content, document_type, description, agreement_start_date, agreement_end_date, agreement_status)
+       VALUES (?, ?, ?, ?, ?, ?, 'agreement', ?, ?, ?, ?)`,
+      [tenantId, req.file.filename || req.file.originalname, req.file.originalname, req.file.mimetype, req.file.size, req.file.buffer, description || '', agreement_start_date, agreement_end_date, agreement_status || 'draft']
+    );
+    console.log(`[RENTAL AGREEMENT] Success: Agreement uploaded with ID ${result.insertId}`);
+    res.json({ id: result.insertId, message: 'Rental agreement uploaded successfully' });
+    
+    // Trigger immediate backup to preserve agreement record
+    createAutoBackup('rental-agreement-upload');
+  } catch (err) {
+    console.error(`[RENTAL AGREEMENT] Database error:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update rental agreement dates and status
+app.put('/api/rental-agreements/:id', async (req, res) => {
+  const { agreement_start_date, agreement_end_date, description, agreement_status } = req.body;
+  
+  try {
+    await pool.query(
+      `UPDATE tenant_documents SET agreement_start_date = ?, agreement_end_date = ?, description = ?, agreement_status = ? WHERE id = ? AND document_type = 'agreement'`,
+      [agreement_start_date, agreement_end_date, description, agreement_status, req.params.id]
+    );
+    res.json({ message: 'Rental agreement updated successfully' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2100,8 +2164,8 @@ app.post('/api/backup/restore', async (req, res) => {
           fileContent = Buffer.from(fileContent, 'base64');
         }
         await connection.query(
-          'INSERT INTO tenant_documents (id,tenant_id,filename,original_name,mime_type,file_size,file_content,document_type,description,uploaded_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
-          [d.id, d.tenant_id, d.filename, d.original_name, d.mime_type, d.file_size, fileContent, d.document_type, d.description, toMySQLDateTime(d.uploaded_at)]
+          'INSERT INTO tenant_documents (id,tenant_id,filename,original_name,mime_type,file_size,file_content,document_type,description,uploaded_at,agreement_start_date,agreement_end_date,agreement_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [d.id, d.tenant_id, d.filename, d.original_name, d.mime_type, d.file_size, fileContent, d.document_type, d.description, toMySQLDateTime(d.uploaded_at), d.agreement_start_date || null, d.agreement_end_date || null, d.agreement_status || 'draft']
         );
       }
     }
@@ -2991,8 +3055,8 @@ async function autoRecoverFromBackup() {
             fileContent = Buffer.from(fileContent, 'base64');
           }
           await connection.query(
-            'INSERT INTO tenant_documents (id,tenant_id,filename,original_name,mime_type,file_size,file_content,document_type,description,uploaded_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
-            [d.id, d.tenant_id, d.filename, d.original_name, d.mime_type, d.file_size, fileContent, d.document_type, d.description, toMySQLDateTime(d.uploaded_at)]
+            'INSERT INTO tenant_documents (id,tenant_id,filename,original_name,mime_type,file_size,file_content,document_type,description,uploaded_at,agreement_start_date,agreement_end_date,agreement_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [d.id, d.tenant_id, d.filename, d.original_name, d.mime_type, d.file_size, fileContent, d.document_type, d.description, toMySQLDateTime(d.uploaded_at), d.agreement_start_date || null, d.agreement_end_date || null, d.agreement_status || 'draft']
           );
         }
       }
