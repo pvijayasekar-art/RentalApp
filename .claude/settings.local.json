@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"D:\\\\Learnings\\\\claude\\\\RentalManager\\\\.claude\\\\worktrees\\\\charming-moser-fdf89d\" -Recurse -Filter \"*.jsx\")",
+      "Bash(Select-Object FullName, Length)",
+      "Bash(grep -n \"agreement_status\" \"D:/Learnings/claude/RentalManager/frontend/src/App.jsx\")",
+      "Bash(cp \"D:/Learnings/claude/RentalManager/frontend/src/App.jsx\" \"D:/Learnings/claude/RentalManager/.claude/worktrees/charming-moser-fdf89d/frontend/src/App.jsx\" && cp \"D:/Learnings/claude/RentalManager/backend/server.js\" \"D:/Learnings/claude/RentalManager/.claude/worktrees/charming-moser-fdf89d/backend/server.js\" && echo \"Files copied\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(gh pr create --title 'Add Rental Agreements feature' --body ' *)",
+      "PowerShell(git -C \"D:\\\\Learnings\\\\claude\\\\RentalManager\\\\.claude\\\\worktrees\\\\charming-moser-fdf89d\" config --get credential.helper)",
+      "PowerShell($env:GH_TOKEN)",
+      "PowerShell($env:GITHUB_TOKEN)"
+    ]
+  }
+}
