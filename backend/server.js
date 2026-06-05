@@ -430,7 +430,7 @@ app.get('/api/reports/profit-loss', async (req, res) => {
 app.get('/api/tenants', async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT t.*, p.name as property_name, p.monthly_rent 
+      SELECT t.*, p.name as property_name, p.monthly_rent as property_monthly_rent
       FROM tenants t LEFT JOIN properties p ON t.property_id=p.id
       ORDER BY t.created_at DESC
     `);
@@ -937,6 +937,51 @@ app.delete('/api/documents/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM tenant_documents WHERE id=?', [req.params.id]);
     res.json({ message: 'Document deleted' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── TENANT HANDOVER ITEMS ────────────────────────────────────────────────────
+// Get all handover items for a tenant
+app.get('/api/tenants/:tenantId/handover-items', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT * FROM tenant_handover_items WHERE tenant_id = ? ORDER BY created_at DESC`,
+      [req.params.tenantId]
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Add a handover item for a tenant
+app.post('/api/tenants/:tenantId/handover-items', async (req, res) => {
+  const { item_name, item_description, quantity, item_type, status, handover_date, return_date, notes } = req.body;
+  try {
+    const [result] = await pool.query(
+      `INSERT INTO tenant_handover_items (tenant_id, item_name, item_description, quantity, item_type, status, handover_date, return_date, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.params.tenantId, item_name, item_description, quantity || 1, item_type || 'original', status || 'handed_over', handover_date || null, return_date || null, notes]
+    );
+    res.json({ id: result.insertId, message: 'Handover item added successfully' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Update a handover item
+app.put('/api/handover-items/:id', async (req, res) => {
+  const { item_name, item_description, quantity, item_type, status, handover_date, return_date, notes } = req.body;
+  try {
+    await pool.query(
+      `UPDATE tenant_handover_items SET item_name=?, item_description=?, quantity=?, item_type=?, status=?, handover_date=?, return_date=?, notes=? WHERE id=?`,
+      [item_name, item_description, quantity, item_type, status, handover_date || null, return_date || null, notes, req.params.id]
+    );
+    res.json({ message: 'Handover item updated successfully' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Delete a handover item
+app.delete('/api/handover-items/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM tenant_handover_items WHERE id=?', [req.params.id]);
+    res.json({ message: 'Handover item deleted' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1612,9 +1657,9 @@ app.get('/api/tax/calculate-financial-year/:financialYear', async (req, res) => 
     const grossAnnualValue = parseFloat(collectionsData[0]?.gross_annual_value || 0);
     const propertyTaxPaid = parseFloat(expensesData[0]?.property_taxes || 0);
     const deduction80C = parseFloat(deductions80C) || 0;
-    
-    // Standard deduction for new regime
-    const standardDeduction = 50000;
+
+    // Standard deduction for rental income under new regime: 30% of gross annual value (FY 2025-26)
+    const standardDeduction = grossAnnualValue * 0.30;
     
     // Calculate taxable income
     const netRentalIncome = grossAnnualValue - propertyTaxPaid;
@@ -1745,9 +1790,9 @@ app.get('/api/tax/calculate-calendar-year/:calendarYear', async (req, res) => {
     const grossAnnualValue = parseFloat(collectionsData[0]?.gross_annual_value || 0);
     const propertyTaxPaid = parseFloat(expensesData[0]?.property_taxes || 0);
     const deduction80C = parseFloat(deductions80C) || 0;
-    
-    // Standard deduction for FY 2026-27 under new regime
-    const standardDeduction = 50000;
+
+    // Standard deduction for rental income under new regime: 30% of gross annual value (FY 2025-26)
+    const standardDeduction = grossAnnualValue * 0.30;
     
     // Calculate taxable income
     const netRentalIncome = grossAnnualValue - propertyTaxPaid;
@@ -2490,18 +2535,39 @@ app.get('/api/predictions', async (req, res) => {
       throw new Error('Failed to fetch active tenants from database');
     }
     
-    // Get last 6 months of collection data for trend analysis - only rent payments
+    // Get last 12 months of collection data for better trend analysis - only rent payments
     const [monthlyHistory] = await pool.query(`
       SELECT DATE_FORMAT(payment_date,'%Y-%m') as month,
              SUM(amount) as collected,
-             COUNT(*) as payments
+             COUNT(*) as payments,
+             COUNT(DISTINCT tenant_id) as tenant_count
       FROM collections
-      WHERE status = 'paid' 
-        AND payment_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+      WHERE status = 'paid'
+        AND payment_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
         AND (category = 'rent' OR category IS NULL)
       GROUP BY DATE_FORMAT(payment_date,'%Y-%m')
       ORDER BY month DESC
     `);
+
+    // Calculate collection statistics for better predictions
+    const collectionStats = {
+      avgCollected: 0,
+      minCollected: Infinity,
+      maxCollected: 0,
+      stdDev: 0,
+      months: monthlyHistory.length
+    };
+
+    if (monthlyHistory.length > 0) {
+      const collectedValues = monthlyHistory.map(h => h.collected);
+      collectionStats.avgCollected = collectedValues.reduce((a, b) => a + b, 0) / collectedValues.length;
+      collectionStats.minCollected = Math.min(...collectedValues);
+      collectionStats.maxCollected = Math.max(...collectedValues);
+
+      // Calculate standard deviation
+      const variance = collectedValues.reduce((sum, val) => sum + Math.pow(val - collectionStats.avgCollected, 2), 0) / collectedValues.length;
+      collectionStats.stdDev = Math.sqrt(variance);
+    }
     
     // Get tenant-specific collection data to identify partial month payments
     const [tenantCollections] = await pool.query(`
@@ -2564,18 +2630,48 @@ app.get('/api/predictions', async (req, res) => {
       ? Math.min((actualAverageMonthlyIncome / potentialMonthlyIncome) * 100, 90)
       : 0;
     
-    // Get expense history for trend - include maintenance, taxes, and utilities
+    // Get expense history for trend - exclude yearly taxes, focus on recurring operational expenses
     const [expenseHistory] = await pool.query(`
       SELECT DATE_FORMAT(expense_date,'%Y-%m') as month,
              SUM(amount) as total,
              category,
              COUNT(*) as count
       FROM expenses
-      WHERE expense_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-        AND category IN ('maintenance', 'taxes', 'utilities')
+      WHERE expense_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+        AND category IN ('maintenance', 'utilities')
       GROUP BY DATE_FORMAT(expense_date,'%Y-%m'), category
       ORDER BY month DESC
     `);
+
+    // Calculate average expense baseline from historical data
+    const expenseByMonth = {};
+    const expenseByCategory = {};
+    expenseHistory.forEach(e => {
+      if (!expenseByMonth[e.month]) expenseByMonth[e.month] = 0;
+      if (!expenseByCategory[e.category]) expenseByCategory[e.category] = [];
+      expenseByMonth[e.month] += parseFloat(e.total);
+      expenseByCategory[e.category].push(parseFloat(e.total));
+    });
+
+    // Calculate category-wise averages for better prediction
+    const categoryAverages = {};
+    Object.keys(expenseByCategory).forEach(cat => {
+      const values = expenseByCategory[cat];
+      const avg = values.reduce((a, b) => a + b, 0) / values.length;
+      categoryAverages[cat] = avg;
+    });
+
+    // Calculate overall monthly expense average
+    const monthlyExpenseValues = Object.values(expenseByMonth);
+    const averageMonthlyExpense = monthlyExpenseValues.length > 0
+      ? monthlyExpenseValues.reduce((a, b) => a + b, 0) / monthlyExpenseValues.length
+      : 0;
+
+    // Calculate expense volatility (standard deviation) for confidence scoring
+    const expenseVariance = monthlyExpenseValues.length > 0
+      ? monthlyExpenseValues.reduce((sum, val) => sum + Math.pow(val - averageMonthlyExpense, 2), 0) / monthlyExpenseValues.length
+      : 0;
+    const expenseStdDev = Math.sqrt(expenseVariance);
     
     // Calculate pro-rated rent for each active tenant based on start date
     const calculateProRatedRent = (tenant, targetMonth, targetYear) => {
@@ -2630,48 +2726,76 @@ app.get('/api/predictions', async (req, res) => {
         // Use actual collections for months that have historical data
         predictedIncome = monthlyCollections.collected;
       } else {
-        // Predict future months based on current active tenants
-        predictedIncome = activeTenants.reduce((sum, tenant) => {
+        // Predict future months based on:
+        // 1. Potential income from active tenants
+        // 2. Adjusted by historical collection rate (not all rent gets collected)
+        const potentialIncome = activeTenants.reduce((sum, tenant) => {
           return sum + calculateProRatedRent(tenant, forecastMonth, forecastYear);
         }, 0);
+
+        // Apply collection efficiency based on historical data
+        if (collectionStats.avgCollected > 0 && potentialMonthlyIncome > 0) {
+          // Use actual collection efficiency from history
+          const collectionEfficiency = collectionStats.avgCollected / potentialMonthlyIncome;
+          predictedIncome = Math.round(potentialIncome * collectionEfficiency);
+        } else {
+          // Fallback: use potential income directly
+          predictedIncome = potentialIncome;
+        }
       }
       
       // Use historical expenses for exact month match, predict for future months
-      const monthlyExpenses = expenseHistory.filter(e => e.month === monthKey);
+      const monthlyExpensesForMonth = expenseHistory.filter(e => e.month === monthKey);
 
       let predictedExpenses;
-      if (monthlyExpenses.length > 0) {
+      if (monthlyExpensesForMonth.length > 0) {
         // Use actual expenses for this specific month/year
-        predictedExpenses = monthlyExpenses.reduce((sum, e) => sum + parseFloat(e.total), 0);
+        predictedExpenses = monthlyExpensesForMonth.reduce((sum, e) => sum + parseFloat(e.total), 0);
       } else {
-        // Predict based on same month from historical years (seasonal) or category averages
+        // Predict based on same month from historical years (seasonal pattern)
         const sameMonthHistory = expenseHistory.filter(e => {
-          const expenseMonth = new Date(e.month + '-01').getMonth();
+          const expenseMonth = parseInt(e.month.split('-')[1]) - 1; // Convert to 0-11
           return expenseMonth === forecastMonth;
         });
 
         if (sameMonthHistory.length > 0) {
-          // Use seasonal average for this specific month
+          // Use seasonal average for this specific month from past years
           const seasonalAvg = sameMonthHistory.reduce((sum, e) => sum + parseFloat(e.total), 0) / sameMonthHistory.length;
           predictedExpenses = seasonalAvg;
-        } else if (expenseHistory.length > 0) {
-          // Fallback to overall monthly average
-          const monthsOfData = new Set(expenseHistory.map(e => e.month)).size;
-          const totalExpenses = expenseHistory.reduce((sum, e) => sum + parseFloat(e.total), 0);
-          predictedExpenses = monthsOfData > 0 ? totalExpenses / monthsOfData : 0;
+        } else if (averageMonthlyExpense > 0) {
+          // Use weighted average: base average with seasonal adjustment
+          // Some months may have higher maintenance (monsoon, etc.)
+          const monthlyFactor = forecastMonth >= 5 && forecastMonth <= 9 ? 1.15 : 1.0; // Monsoon season (Jun-Sep) higher
+          predictedExpenses = averageMonthlyExpense * monthlyFactor;
         } else {
+          // If no historical data, use zero
           predictedExpenses = 0;
         }
       }
       
-      // Determine confidence based on data availability and amount
+      // Determine confidence based on data availability, volatility, and consistency
       let confidence;
       if (monthlyCollections) {
-        confidence = 'high'; // Actual historical data
-      } else if (predictedIncome > 0) {
-        confidence = 'medium'; // Projected based on active tenants
+        // Actual historical data - high confidence
+        confidence = 'high';
+      } else if (predictedIncome > 0 && activeTenants.length >= 2) {
+        // Multiple active tenants provide stable projection
+        confidence = 'medium';
+      } else if (activeTenants.length === 1) {
+        // Single tenant projection - lower confidence
+        confidence = 'medium';
+      } else if (activeTenants.length === 0) {
+        // No tenants - low confidence
+        confidence = 'low';
       } else {
-        confidence = 'low'; // No data available
+        confidence = 'low';
+      }
+
+      // Adjust confidence based on expense volatility
+      if (confidence !== 'high' && expenseStdDev > averageMonthlyExpense * 0.5) {
+        // High expense volatility reduces confidence
+        if (confidence === 'high') confidence = 'medium';
+        else if (confidence === 'medium') confidence = 'low';
       }
 
       forecast.push({
@@ -2712,26 +2836,36 @@ app.get('/api/predictions', async (req, res) => {
       };
     });
     
+    // DEBUG: Log calculation details to see if enhancements are running
+    console.log('[FORECAST DEBUG]', {
+      monthsOfHistoryAnalyzed: monthlyHistory.length,
+      collectionStatsAvg: Math.round(collectionStats.avgCollected),
+      averageMonthlyExpense: Math.round(averageMonthlyExpense),
+      expenseStdDev: Math.round(expenseStdDev),
+      categoryAverages: Object.keys(categoryAverages).length,
+      expenseCategories: Object.keys(categoryAverages),
+      collectionEfficiencyUsed: collectionStats.avgCollected > 0 && potentialMonthlyIncome > 0,
+      monsoonAdjustmentApplied: true,
+      taxesExcluded: true
+    });
+
     // Calculate year-end projections - separate YTD actuals from future forecast
-    const currentFYMonth = now.getMonth(); // 0-11 (Jan-Mar = previous FY, Apr-Dec = current FY)
-
-    // Determine which months in forecast are completed (actual) vs current/future (predicted)
-    // Financial year runs April (3) to March (2)
-    // Index 0 = April, Index 1 = May, ... Index 11 = March
-    const currentFYIndex = currentFYMonth >= 3 ? currentFYMonth - 3 : currentFYMonth + 9;
-
+    // Instead of using current date, check if month has actual historical data
     let ytdIncome = 0;
     let ytdExpenses = 0;
     let futureIncome = 0;
     let futureExpenses = 0;
 
-    forecast.forEach((f, index) => {
-      if (index < currentFYIndex) {
-        // Completed months - actual data only
+    forecast.forEach((f) => {
+      const monthKey = `${f.year}-${String(monthNames.indexOf(f.month) + 1).padStart(2, '0')}`;
+      const hasActualData = monthlyHistory.find(h => h.month === monthKey);
+
+      if (hasActualData) {
+        // This month has actual historical collections - count as YTD
         ytdIncome += f.predictedIncome;
         ytdExpenses += f.predictedExpenses;
       } else {
-        // Current month (partial) and future months - all predictions
+        // This month is a prediction - count as future forecast
         futureIncome += f.predictedIncome;
         futureExpenses += f.predictedExpenses;
       }
@@ -3131,7 +3265,183 @@ async function startServer() {
   
   // Attempt auto-recovery
   await autoRecoverFromBackup();
-  
+
+  // ─── MYSQL ADMIN API ROUTES ──────────────────────────────────────────────────
+  // GET all tables
+  app.get('/api/admin/tables', async (req, res) => {
+    try {
+      const [tables] = await pool.query(
+        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?",
+        [process.env.DB_NAME || 'rental_db']
+      );
+      res.json(tables);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET table schema
+  app.get('/api/admin/table/:tableName/schema', async (req, res) => {
+    try {
+      const { tableName } = req.params;
+      const [columns] = await pool.query(
+        "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+        [process.env.DB_NAME || 'rental_db', tableName]
+      );
+      res.json(columns);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET table data with pagination and search
+  app.get('/api/admin/table/:tableName', async (req, res) => {
+    try {
+      const { tableName } = req.params;
+      const { page = 1, limit = 20, search = '' } = req.query;
+      const offset = (parseInt(page) - 1) * parseInt(limit);
+
+      // Get columns for search
+      const [columns] = await pool.query(
+        "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
+        [process.env.DB_NAME || 'rental_db', tableName]
+      );
+
+      let query = `SELECT * FROM \`${tableName}\``;
+      let params = [];
+
+      // Add search clause if search term provided
+      if (search && search.trim()) {
+        const searchConditions = columns
+          .filter(col => ['VARCHAR', 'CHAR', 'TEXT', 'LONGTEXT'].includes(col.DATA_TYPE))
+          .map(col => `\`${col.COLUMN_NAME}\` LIKE ?`);
+
+        if (searchConditions.length > 0) {
+          query += ` WHERE ${searchConditions.join(' OR ')}`;
+          const searchTerm = `%${search}%`;
+          params = Array(searchConditions.length).fill(searchTerm);
+        }
+      }
+
+      // Add pagination
+      query += ` LIMIT ? OFFSET ?`;
+      params.push(parseInt(limit), offset);
+
+      const [data] = await pool.query(query, params);
+
+      res.json({ data });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST create record
+  app.post('/api/admin/table/:tableName', async (req, res) => {
+    try {
+      const { tableName } = req.params;
+      const values = req.body;
+
+      const columns = Object.keys(values);
+      const placeholders = columns.map(() => '?').join(',');
+      const query = `INSERT INTO \`${tableName}\` (\`${columns.join('`,`')}\`) VALUES (${placeholders})`;
+      const data = columns.map(col => values[col]);
+
+      const [result] = await pool.query(query, data);
+      res.status(201).json({ id: result.insertId, message: 'Record created successfully' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // PUT update record
+  app.put('/api/admin/table/:tableName/:id', async (req, res) => {
+    try {
+      const { tableName, id } = req.params;
+      let values = req.body;
+
+      // Remove system-generated columns
+      delete values['created_at'];
+      delete values['updated_at'];
+      delete values['id'];
+
+      // Get primary key column
+      const [pkInfo] = await pool.query(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_KEY = 'PRI'",
+        [process.env.DB_NAME || 'rental_db', tableName]
+      );
+
+      if (pkInfo.length === 0) {
+        return res.status(400).json({ error: 'Table has no primary key' });
+      }
+
+      const pkColumn = pkInfo[0].COLUMN_NAME;
+      const columns = Object.keys(values);
+
+      if (columns.length === 0) {
+        return res.status(400).json({ error: 'No editable fields provided' });
+      }
+
+      const setClause = columns.map(col => `\`${col}\` = ?`).join(',');
+      const data = columns.map(col => values[col]);
+      data.push(id);
+
+      const query = `UPDATE \`${tableName}\` SET ${setClause} WHERE \`${pkColumn}\` = ?`;
+      await pool.query(query, data);
+
+      res.json({ message: 'Record updated successfully' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // DELETE record
+  app.delete('/api/admin/table/:tableName/:id', async (req, res) => {
+    try {
+      const { tableName, id } = req.params;
+
+      // Get primary key column
+      const [pkInfo] = await pool.query(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_KEY = 'PRI'",
+        [process.env.DB_NAME || 'rental_db', tableName]
+      );
+
+      if (pkInfo.length === 0) {
+        return res.status(400).json({ error: 'Table has no primary key' });
+      }
+
+      const pkColumn = pkInfo[0].COLUMN_NAME;
+      const query = `DELETE FROM \`${tableName}\` WHERE \`${pkColumn}\` = ?`;
+      await pool.query(query, [id]);
+
+      res.json({ message: 'Record deleted successfully' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET table statistics
+  app.get('/api/admin/stats/overview', async (req, res) => {
+    try {
+      const [tables] = await pool.query(
+        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?",
+        [process.env.DB_NAME || 'rental_db']
+      );
+
+      const stats = {};
+
+      for (const table of tables) {
+        const [countResult] = await pool.query(
+          `SELECT COUNT(*) as count FROM \`${table.TABLE_NAME}\``
+        );
+        stats[table.TABLE_NAME] = countResult[0].count;
+      }
+
+      res.json(stats);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Start the server - bind to 0.0.0.0 to accept external connections
   const server = app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
   

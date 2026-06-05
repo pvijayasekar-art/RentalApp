@@ -68,7 +68,9 @@ docker exec rental-mysql mysql -uroot -prentalpass123 rental_db -e "
     UNION ALL
     SELECT 'Expenses', COUNT(*) FROM expenses
     UNION ALL
-    SELECT 'TDS Deposits', COUNT(*) FROM tds_deposits;
+    SELECT 'TDS Deposits', COUNT(*) FROM tds_deposits
+    UNION ALL
+    SELECT 'Handover Items', COUNT(*) FROM tenant_handover_items;
 " 2>&1
 
 # Confirm restore
@@ -116,6 +118,10 @@ try {
             Write-Host "  TDS Deposits: $($backupData.tables.tds_deposits.Count)" -ForegroundColor White
         }
         
+        if ($backupData.tables.tenant_handover_items) {
+            Write-Host "  Handover Items: $($backupData.tables.tenant_handover_items.Count)" -ForegroundColor White
+        }
+        
         # Calculate financial totals
         $totalCollections = ($backupData.tables.collections | Measure-Object -Property amount -Sum).Sum
         $totalExpenses = ($backupData.tables.expenses | Measure-Object -Property amount -Sum).Sum
@@ -143,7 +149,9 @@ try {
             UNION ALL
             SELECT 'Expenses', COUNT(*) FROM expenses
             UNION ALL
-            SELECT 'TDS Deposits', COUNT(*) FROM tds_deposits;
+            SELECT 'TDS Deposits', COUNT(*) FROM tds_deposits
+            UNION ALL
+            SELECT 'Handover Items', COUNT(*) FROM tenant_handover_items;
         " 2>&1
         
         Write-Host ""

@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS tenant_handover_items (
   item_name VARCHAR(255) NOT NULL,
   item_description TEXT,
   quantity INT DEFAULT 1,
+  item_type ENUM('original', 'duplicate', 'both') DEFAULT 'original',
   status ENUM('handed_over', 'pending', 'returned') DEFAULT 'handed_over',
   handover_date DATE,
   return_date DATE,

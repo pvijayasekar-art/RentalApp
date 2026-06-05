@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import AdminPanel from "./pages/AdminPanel";
 
 const API = "/api";
 
@@ -430,6 +431,9 @@ function Tenants() {
   const [extractedData, setExtractedData] = useState({ name: '', dateOfBirth: '', aadharNumber: '', panNumber: '', address: '', rawText: '', error: '' });
   const [extracting, setExtracting] = useState(false);
   const [search, setSearch] = useState("");
+  const [handoverModal, setHandoverModal] = useState(null);
+  const [handoverItems, setHandoverItems] = useState([]);
+  const [handoverForm, setHandoverForm] = useState({ item_name: '', item_description: '', quantity: 1, item_type: 'original', status: 'handed_over', handover_date: '', return_date: '', notes: '' });
   const blank = { name:"",email:"",phone:"",aadhar_number:"",pan_number:"",emergency_contact:"",property_id:"",unit_number:"",start_date:"",end_date:"",security_deposit:"",monthly_rent:"",status:"active",tds_applicable:false,tds_rate:5.00,tds_section:"194-IB" };
   const [form, setForm] = useState(blank);
   const [errors, setErrors] = useState({});
@@ -657,6 +661,46 @@ function Tenants() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  // Handover items functions
+  const openHandoverModal = async (tenant) => {
+    setHandoverModal(tenant);
+    const items = await api(`/tenants/${tenant.id}/handover-items`);
+    setHandoverItems(items);
+  };
+
+  const saveHandoverItem = async () => {
+    if (!handoverForm.item_name?.trim()) return alert('Item name is required');
+    try {
+      await api(`/tenants/${handoverModal.id}/handover-items`, 'POST', handoverForm);
+      setHandoverForm({ item_name: '', item_description: '', quantity: 1, item_type: 'original', status: 'handed_over', handover_date: '', return_date: '', notes: '' });
+      const items = await api(`/tenants/${handoverModal.id}/handover-items`);
+      setHandoverItems(items);
+    } catch (err) {
+      alert('Failed to save handover item: ' + err.message);
+    }
+  };
+
+  const updateHandoverItem = async (itemId, updates) => {
+    try {
+      await api(`/handover-items/${itemId}`, 'PUT', updates);
+      const items = await api(`/tenants/${handoverModal.id}/handover-items`);
+      setHandoverItems(items);
+    } catch (err) {
+      alert('Failed to update handover item: ' + err.message);
+    }
+  };
+
+  const deleteHandoverItem = async (itemId) => {
+    if (!confirm('Delete this handover item?')) return;
+    try {
+      await api(`/handover-items/${itemId}`, 'DELETE');
+      const items = await api(`/tenants/${handoverModal.id}/handover-items`);
+      setHandoverItems(items);
+    } catch (err) {
+      alert('Failed to delete handover item: ' + err.message);
+    }
+  };
+
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"24px"}}>
@@ -748,6 +792,7 @@ function Tenants() {
                   <div style={{display:"flex",gap:"6px"}}>
                     <button onClick={() => open(t)} style={{padding:"6px",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"6px",color:"var(--text)",cursor:"pointer"}}><Icon name="edit" size={13}/></button>
                     <button onClick={() => openDocModal(t)} style={{padding:"6px",background:"#3b82f622",border:"1px solid #3b82f644",borderRadius:"6px",color:"#3b82f6",cursor:"pointer"}} title="Documents"><Icon name="file" size={13}/></button>
+                    <button onClick={() => openHandoverModal(t)} style={{padding:"6px",background:"#22c55e22",border:"1px solid #22c55e44",borderRadius:"6px",color:"#22c55e",cursor:"pointer"}} title="Handover Items"><Icon name="book" size={13}/></button>
                     <button onClick={() => del(t.id)} style={{padding:"6px",background:"#ef444411",border:"1px solid #ef444433",borderRadius:"6px",color:"#ef4444",cursor:"pointer"}}><Icon name="trash" size={13}/></button>
                   </div>
                 </td>
@@ -937,6 +982,173 @@ function Tenants() {
             <button onClick={() => setExtractModal(null)} style={{padding:"10px 20px",border:"1px solid var(--border)",background:"var(--bg)",color:"var(--text)",borderRadius:"8px",cursor:"pointer",fontWeight:500}}>Cancel</button>
             <button onClick={applyExtractedData} disabled={!extractedData.name && !extractedData.aadharNumber && !extractedData.panNumber} style={{padding:"10px 24px",background:"var(--accent)",color:"#fff",border:"none",borderRadius:"8px",cursor:"pointer",fontWeight:600,opacity:(!extractedData.name && !extractedData.aadharNumber && !extractedData.panNumber)?0.5:1}}>Apply to Tenant</button>
           </div>
+        </Modal>
+      )}
+      
+      {/* Handover Items Modal */}
+      {handoverModal && (
+        <Modal title={`Handover Items - ${handoverModal.name}`} onClose={() => { setHandoverModal(null); setHandoverItems([]); setHandoverForm({ item_name: '', item_description: '', quantity: 1, item_type: 'original', status: 'handed_over', handover_date: '', return_date: '', notes: '' }); }}>
+          <div style={{marginBottom:"20px",padding:"16px",background:"var(--bg)",borderRadius:"12px"}}>
+            <h4 style={{margin:"0 0 12px",fontSize:"14px",color:"var(--text)"}}>Add New Handover Item</h4>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"12px",marginBottom:"12px"}}>
+              <Field label="Item Name *">
+                <input type="text" value={handoverForm.item_name} onChange={e => setHandoverForm({...handoverForm, item_name: e.target.value})} placeholder="e.g. House Main Door Key" style={inputStyle}/>
+              </Field>
+              <Field label="Quantity">
+                <input type="number" value={handoverForm.quantity} onChange={e => setHandoverForm({...handoverForm, quantity: parseInt(e.target.value) || 1})} min="1" style={inputStyle}/>
+              </Field>
+              <Field label="Type">
+                <Select value={handoverForm.item_type} onChange={e => setHandoverForm({...handoverForm, item_type: e.target.value})}>
+                  <option value="original">Original</option>
+                  <option value="duplicate">Duplicate</option>
+                  <option value="both">Both</option>
+                </Select>
+              </Field>
+            </div>
+            <Field label="Description">
+              <input type="text" value={handoverForm.item_description} onChange={e => setHandoverForm({...handoverForm, item_description: e.target.value})} placeholder="e.g. Main door key" style={inputStyle}/>
+            </Field>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"12px",marginTop:"12px"}}>
+              <Field label="Status">
+                <Select value={handoverForm.status} onChange={e => setHandoverForm({...handoverForm, status: e.target.value})}>
+                  <option value="handed_over">Handed Over</option>
+                  <option value="pending">Pending</option>
+                  <option value="returned">Returned</option>
+                </Select>
+              </Field>
+              <Field label="Handover Date">
+                <input type="date" value={handoverForm.handover_date} onChange={e => setHandoverForm({...handoverForm, handover_date: e.target.value})} style={inputStyle}/>
+              </Field>
+              <Field label="Return Date">
+                <input type="date" value={handoverForm.return_date} onChange={e => setHandoverForm({...handoverForm, return_date: e.target.value})} style={inputStyle}/>
+              </Field>
+            </div>
+            <Field label="Notes" style={{marginTop:"12px"}}>
+              <textarea value={handoverForm.notes} onChange={e => setHandoverForm({...handoverForm, notes: e.target.value})} placeholder="Additional notes..." style={{...inputStyle,height:"60px",resize:"vertical"}}/>
+            </Field>
+            <button onClick={saveHandoverItem} style={{marginTop:"12px",padding:"8px 16px",background:"var(--accent)",color:"#fff",border:"none",borderRadius:"8px",cursor:"pointer",fontWeight:"600"}}>
+              Add Item
+            </button>
+          </div>
+          
+          <h4 style={{margin:"0 0 12px",fontSize:"14px",color:"var(--text)"}}>Handover Items ({handoverItems.length})</h4>
+          {handoverItems.length === 0 ? (
+            <div style={{textAlign:"center",padding:"20px",color:"var(--muted)"}}>No handover items recorded yet</div>
+          ) : (
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:"12px"}}>
+                <thead style={{background:"var(--bg)"}}>
+                  <tr style={{color:"var(--muted)",fontWeight:600,textTransform:"uppercase",fontSize:"10px",letterSpacing:"0.5px"}}>
+                    <th style={{textAlign:"left",padding:"8px",borderBottom:"1px solid var(--border)"}}>Item Name</th>
+                    <th style={{textAlign:"left",padding:"8px",borderBottom:"1px solid var(--border)"}}>Description</th>
+                    <th style={{textAlign:"center",padding:"8px",borderBottom:"1px solid var(--border)"}}>Type</th>
+                    <th style={{textAlign:"center",padding:"8px",borderBottom:"1px solid var(--border)"}}>Qty</th>
+                    <th style={{textAlign:"center",padding:"8px",borderBottom:"1px solid var(--border)"}}>Status</th>
+                    <th style={{textAlign:"center",padding:"8px",borderBottom:"1px solid var(--border)"}}>Handover Date</th>
+                    <th style={{textAlign:"center",padding:"8px",borderBottom:"1px solid var(--border)"}}>Return Date</th>
+                    <th style={{textAlign:"left",padding:"8px",borderBottom:"1px solid var(--border)"}}>Notes</th>
+                    <th style={{textAlign:"center",padding:"8px",borderBottom:"1px solid var(--border)"}}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {handoverItems.map(item => (
+                    <tr key={item.id} style={{borderBottom:"1px solid var(--border)"}}>
+                      <td style={{padding:"8px"}}>
+                        <input 
+                          type="text" 
+                          value={item.item_name} 
+                          onChange={e => updateHandoverItem(item.id, { item_name: e.target.value })}
+                          title={item.item_name}
+                          style={{width:"100%",padding:"4px",border:"1px solid var(--border)",borderRadius:"4px",background:"var(--card)",color:"var(--text)",fontSize:"12px",cursor:"pointer"}}
+                        />
+                      </td>
+                      <td style={{padding:"8px"}}>
+                        <input 
+                          type="text" 
+                          value={item.item_description || ''} 
+                          onChange={e => updateHandoverItem(item.id, { item_description: e.target.value })}
+                          placeholder="Description"
+                          title={item.item_description || 'No description'}
+                          style={{width:"100%",padding:"4px",border:"1px solid var(--border)",borderRadius:"4px",background:"var(--card)",color:"var(--text)",fontSize:"12px",cursor:"pointer"}}
+                        />
+                      </td>
+                      <td style={{padding:"8px",textAlign:"center"}}>
+                        <select 
+                          value={item.item_type || 'original'} 
+                          onChange={e => updateHandoverItem(item.id, { item_type: e.target.value })}
+                          title={item.item_type || 'original'}
+                          style={{padding:"4px",border:"1px solid var(--border)",borderRadius:"4px",background:"var(--card)",color:"var(--text)",fontSize:"11px",cursor:"pointer"}}
+                        >
+                          <option value="original">Original</option>
+                          <option value="duplicate">Duplicate</option>
+                          <option value="both">Both</option>
+                        </select>
+                      </td>
+                      <td style={{padding:"8px",textAlign:"center"}}>
+                        <input 
+                          type="number" 
+                          value={item.quantity} 
+                          onChange={e => updateHandoverItem(item.id, { quantity: parseInt(e.target.value) || 1 })}
+                          min="1"
+                          title={`Quantity: ${item.quantity}`}
+                          style={{width:"60px",padding:"4px",border:"1px solid var(--border)",borderRadius:"4px",background:"var(--card)",color:"var(--text)",fontSize:"12px",textAlign:"center",cursor:"pointer"}}
+                        />
+                      </td>
+                      <td style={{padding:"8px",textAlign:"center"}}>
+                        <select 
+                          value={item.status} 
+                          onChange={e => updateHandoverItem(item.id, { status: e.target.value })}
+                          title={item.status}
+                          style={{padding:"4px",border:"1px solid var(--border)",borderRadius:"4px",background:"var(--card)",color:"var(--text)",fontSize:"11px",cursor:"pointer"}}
+                        >
+                          <option value="handed_over">Handed Over</option>
+                          <option value="pending">Pending</option>
+                          <option value="returned">Returned</option>
+                        </select>
+                      </td>
+                      <td style={{padding:"8px",textAlign:"center"}}>
+                        <input 
+                          type="date" 
+                          value={item.handover_date || ''} 
+                          onChange={e => updateHandoverItem(item.id, { handover_date: e.target.value })}
+                          title={item.handover_date ? `Handover Date: ${fmtDate(item.handover_date)}` : 'No handover date'}
+                          style={{padding:"4px",border:"1px solid var(--border)",borderRadius:"4px",background:"var(--card)",color:"var(--text)",fontSize:"11px",cursor:"pointer"}}
+                        />
+                      </td>
+                      <td style={{padding:"8px",textAlign:"center"}}>
+                        <input 
+                          type="date" 
+                          value={item.return_date || ''} 
+                          onChange={e => updateHandoverItem(item.id, { return_date: e.target.value })}
+                          title={item.return_date ? `Return Date: ${fmtDate(item.return_date)}` : 'No return date'}
+                          style={{padding:"4px",border:"1px solid var(--border)",borderRadius:"4px",background:"var(--card)",color:"var(--text)",fontSize:"11px",cursor:"pointer"}}
+                        />
+                      </td>
+                      <td style={{padding:"8px"}}>
+                        <input 
+                          type="text" 
+                          value={item.notes || ''} 
+                          onChange={e => updateHandoverItem(item.id, { notes: e.target.value })}
+                          placeholder="Notes"
+                          title={item.notes || 'No notes'}
+                          style={{width:"100%",padding:"4px",border:"1px solid var(--border)",borderRadius:"4px",background:"var(--card)",color:"var(--text)",fontSize:"12px",cursor:"pointer"}}
+                        />
+                      </td>
+                      <td style={{padding:"8px",textAlign:"center"}}>
+                        <button 
+                          onClick={() => deleteHandoverItem(item.id)} 
+                          title="Delete this item"
+                          style={{padding:"4px 8px",background:"#ef444411",border:"1px solid #ef444433",borderRadius:"4px",color:"#ef4444",cursor:"pointer",fontSize:"11px"}}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Modal>
       )}
     </div>
@@ -4200,12 +4412,13 @@ const PAGES = [
   { id:"ledger", label:"Ledger", icon:"book" },
   { id:"predictions", label:"Predictions", icon:"chart" },
   { id:"profitlossreport", label:"P&L Report", icon:"report" },
+  { id:"admin", label:"Database Admin", icon:"database" },
 ];
 
 export default function App() {
   const [page, setPage] = useState("dashboard");
 
-  const pages = { dashboard: <Dashboard/>, properties: <Properties/>, tenants: <Tenants/>, collections: <Collections/>, expenses: <Expenses/>, receipts: <Receipts/>, rentalagreements: <RentalAgreements/>, predictions: <Predictions/>, taxfiling: <TaxFiling/>, ledger: <Ledger/>, profitlossreport: <ProfitLossReport/> };
+  const pages = { dashboard: <Dashboard/>, properties: <Properties/>, tenants: <Tenants/>, collections: <Collections/>, expenses: <Expenses/>, receipts: <Receipts/>, rentalagreements: <RentalAgreements/>, predictions: <Predictions/>, taxfiling: <TaxFiling/>, ledger: <Ledger/>, profitlossreport: <ProfitLossReport/>, admin: <AdminPanel/> };
 
   return (
     <>
